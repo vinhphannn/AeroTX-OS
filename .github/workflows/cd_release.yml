@@ -1,0 +1,89 @@
+name: Auto Release Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Loại phiên bản (patch: sửa lỗi, minor: thêm tính năng, major: bản lớn)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      custom_notes:
+        description: 'Ghi chú thêm cho phiên bản này (nếu có)'
+        required: false
+        type: string
+
+jobs:
+  build-and-release:
+    name: Build & Auto Release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write # Quyền tạo Tag và Release
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 
+
+      - name: Build Firmware (ESP-IDF)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.1.2
+          target: esp32
+          path: '.'
+
+      - name: Tự động Tăng Version & Tạo Tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: ${{ github.event.inputs.bump_type }}
+
+      - name: Lấy thời gian hiện tại
+        id: date
+        run: echo "current_date=$(date +'%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_ENV
+
+      - name: Gom nhóm file nạp ESP32 (Create Archive)
+        run: |
+          mkdir release_assets
+          # ESP-IDF tạo ra các file ở thư mục build/, ta cần gom cả bootloader và partition table
+          cp build/TX01.bin release_assets/
+          cp build/bootloader/bootloader.bin release_assets/
+          cp build/partition_table/partition-table.bin release_assets/
+          cp build/flasher_args.json release_assets/
+          cd release_assets
+          zip -r ../AeroTX-OS_Firmware.zip .
+
+      - name: Create Release & Upload Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          body: |
+            ## 🎮 AeroTX-OS (TX01) - Phiên bản ${{ steps.tag_version.outputs.new_tag }}
+            📅 **Thời gian phát hành:** ${{ env.current_date }}
+            
+            ### 📝 Tác giả ghi chú
+            ${{ github.event.inputs.custom_notes || 'Không có ghi chú thêm.' }}
+            
+            ---
+            
+            ### 🔄 Lịch sử thay đổi
+            ${{ steps.tag_version.outputs.changelog }}
+            
+            ### 📦 Assets included (Các file để nạp):
+            - `TX01.bin`: App Firmware chính.
+            - `bootloader.bin`: Bootloader của ESP32.
+            - `partition-table.bin`: Bảng phân vùng bộ nhớ (NVS/App).
+            - Để nạp cho mạch tay cầm, bạn có thể dùng **Espressif Flash Download Tool** với thông số ghi trong `flasher_args.json` hoặc flash thẳng file Zip bằng Tool.
+          draft: false
+          prerelease: false
+          files: |
+            AeroTX-OS_Firmware.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
