@@ -76,12 +76,17 @@ void radio_task(void *pvParameters)
 
         // B3: Chế độ SIMULATOR
         if (snap.sys_mode == 2) {
-            // Đóng gói nút bấm
-            uint8_t buttons = 0;
-            if (snap.channels[4] > 1500) buttons |= (1 << 0); // ARM
-            if (snap.channels[5] > 1500) buttons |= (1 << 1); // Beeper
-            if (snap.channels[6] > 1500) buttons |= (1 << 2); // LED
-            if (snap.channels[7] > 1500) buttons |= (1 << 3); // AUX
+            // Đóng gói nút bấm (Hỗ trợ tối đa 16 nút)
+            uint16_t buttons = 0;
+            if (snap.channels[4] > 1500) buttons |= (1 << 0); // ARM (Ch5)
+            if (snap.channels[5] > 1500) buttons |= (1 << 1); // Beeper (Ch6)
+            if (snap.channels[6] > 1500) buttons |= (1 << 2); // LED (Ch7)
+            if (snap.channels[7] > 1500) buttons |= (1 << 3); // AUX (Ch8)
+            
+            // Công tắc 3 nấc Flight Mode (Ch9) -> 3 nút bấm ảo riêng biệt
+            if (snap.channels[8] < 1200) buttons |= (1 << 4); // LOW
+            if (snap.channels[8] > 1300 && snap.channels[8] < 1700) buttons |= (1 << 5); // MID
+            if (snap.channels[8] > 1800) buttons |= (1 << 6); // HIGH
             
             // Bắn dữ liệu Joystick sang Bluetooth
             ble_hid_send_report(

@@ -15,7 +15,7 @@ void ble_store_config_init(void);
 static const char *TAG = "BLE_NIMBLE_HID";
 
 // --- HID REPORT DESCRIPTOR ---
-// 6 Axes (Unsigned 16-bit), 8 Buttons
+// 6 Axes (Unsigned 16-bit), 16 Buttons
 static const uint8_t hid_report_desc[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
     0x09, 0x04,        // Usage (Joystick)
@@ -39,14 +39,14 @@ static const uint8_t hid_report_desc[] = {
     0x81, 0x02,        //     Input (Data, Variable, Absolute)
     0xC0,              //   End Collection
     
-    // 8 Buttons
+    // 16 Buttons
     0x05, 0x09,        //   Usage Page (Button)
     0x19, 0x01,        //   Usage Minimum (Button 1)
-    0x29, 0x08,        //   Usage Maximum (Button 8)
+    0x29, 0x10,        //   Usage Maximum (Button 16)
     0x15, 0x00,        //   Logical Minimum (0)
     0x25, 0x01,        //   Logical Maximum (1)
-    0x75, 0x01,        //   Report Size (1)
-    0x95, 0x08,        //   Report Count (8)
+    0x75, 0x01,        //   Report Size (1 bit)
+    0x95, 0x10,        //   Report Count (16 buttons)
     0x81, 0x02,        //   Input (Data, Variable, Absolute)
     
     0xC0               // End Collection
@@ -59,7 +59,7 @@ typedef struct {
     uint16_t rz;     // Pitch
     uint16_t rx;     // P1
     uint16_t ry;     // P2
-    uint8_t  buttons;
+    uint16_t buttons;
 } __attribute__((packed)) gamepad_report_t;
 
 static volatile bool   s_is_connected = false;
@@ -250,16 +250,19 @@ static void ble_hid_advertise(void) {
 
     rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Error setting adv fields: %d", rc);
+        ESP_LOGE(TAG, "Error setting advertisement data: %d", rc);
+        return;
     }
 
+    // Gắn Tên Thiết Bị vào Scan Response để Windows Auto-Reconnect
     memset(&rsp_fields, 0, sizeof rsp_fields);
     rsp_fields.name = (uint8_t *)"AeroTX FPV Gamepad";
     rsp_fields.name_len = strlen("AeroTX FPV Gamepad");
     rsp_fields.name_is_complete = 1;
     rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Error setting scan rsp fields: %d", rc);
+        ESP_LOGE(TAG, "Error setting scan response data: %d", rc);
+        return;
     }
 
     memset(&adv_params, 0, sizeof adv_params);
@@ -310,6 +313,16 @@ static int ble_hid_gap_event(struct ble_gap_event *event, void *arg) {
                 }
             }
             break;
+
+        case BLE_GAP_EVENT_REPEAT_PAIRING: {
+            // Xử lý khi Windows xóa thiết bị và kết nối lại
+            // Xóa bond cũ trên mạch để tự động khớp bond mới
+            struct ble_gap_conn_desc desc;
+            if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) == 0) {
+                ble_store_util_delete_peer(&desc.peer_id_addr);
+            }
+            return BLE_GAP_REPEAT_PAIRING_RETRY;
+        }
     }
     return 0;
 }
@@ -409,7 +422,7 @@ static uint16_t map_axis(uint16_t val, bool invert) {
     return (uint16_t)(((uint32_t)(val - 1000) * 65535) / 1000);
 }
 
-void ble_hid_send_report(uint16_t throttle, uint16_t yaw, uint16_t pitch, uint16_t roll, uint16_t p1, uint16_t p2, uint8_t buttons) {
+void ble_hid_send_report(uint16_t throttle, uint16_t yaw, uint16_t pitch, uint16_t roll, uint16_t p1, uint16_t p2, uint16_t buttons) {
     if (!s_is_connected || !s_is_subscribed) return;
 
     uint32_t now = xTaskGetTickCount();
