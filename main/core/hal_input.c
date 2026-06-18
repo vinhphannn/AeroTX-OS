@@ -11,6 +11,8 @@
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdlib.h>
 
 static const char *TAG = "HAL_INPUT";
@@ -68,21 +70,30 @@ static uint16_t read_mux_raw(uint8_t mux_ch, uint32_t settle_us)
     return (uint16_t)val;
 }
 
-// FIX NOISE: Oversample 4x
-// Oversample 2x với settle time tùy chỉnh
-static uint16_t read_mux_avg(uint8_t mux_ch, uint32_t settle_us)
+// Lấy 3 mẫu và trả về giá trị trung vị (Median).
+// Cách này loại bỏ hoàn toàn các xung nhiễu đột biến (Spikes) cực lớn (như 2012, 1759).
+static uint16_t read_mux_median3(uint8_t mux_ch, uint32_t settle_us)
 {
     mux_select(mux_ch);
     esp_rom_delay_us(settle_us);
-    int v1=0, v2=0;
+    
+    int v[3];
     uint64_t start = esp_timer_get_time();
-    adc_oneshot_read(s_adc_handle, ADC_CHANNEL, &v1);
-    adc_oneshot_read(s_adc_handle, ADC_CHANNEL, &v2);
+    adc_oneshot_read(s_adc_handle, ADC_CHANNEL, &v[0]);
+    adc_oneshot_read(s_adc_handle, ADC_CHANNEL, &v[1]);
+    adc_oneshot_read(s_adc_handle, ADC_CHANNEL, &v[2]);
     uint64_t dur = esp_timer_get_time() - start;
-    if (dur > 2000) {
-        ESP_LOGW(TAG, "Slow ADC avg read: %lluus on CH %d", dur, mux_ch);
+    
+    if (dur > 3000) {
+        ESP_LOGW(TAG, "Slow ADC median read: %lluus on CH %d", dur, mux_ch);
     }
-    return (uint16_t)((v1 + v2) / 2);
+    
+    // Bubble sort để tìm trung vị
+    if (v[0] > v[1]) { int t = v[0]; v[0] = v[1]; v[1] = t; }
+    if (v[1] > v[2]) { int t = v[1]; v[1] = v[2]; v[2] = t; }
+    if (v[0] > v[1]) { int t = v[0]; v[0] = v[1]; v[1] = t; }
+    
+    return (uint16_t)v[1]; // Trả về Median
 }
 
 // FIX NOISE: Adaptive IIR Low-Pass Filter with Deadband
@@ -107,22 +118,22 @@ static uint16_t apply_iir(uint8_t idx, uint16_t new_val)
     int16_t diff = (int16_t)new_val - (int16_t)old_val;
     uint16_t abs_diff = abs(diff);
     
-    // 1. Deadband (Triệt tiêu rung kim): ADC 12-bit có nhiễu dao động tĩnh 1-3 đơn vị.
-    // Nếu dao động < 4 (tương đương ~1 PWM), khóa chặt giá trị, tay cầm đứng im như đá!
-    if (abs_diff <= 3) {
+    // 1. Deadband (Triệt tiêu rung kim): Sau khi qua Median Filter, nhiễu tĩnh còn khoảng 4-8 đơn vị.
+    // Nếu dao động <= 6, khóa chặt giá trị.
+    if (abs_diff <= 6) {
         return old_val;
     }
     
     // 2. Dynamic EMA (Exponential Moving Average)
     uint32_t alpha;
-    if (abs_diff < 10) {
-        alpha = 32;  // Di chuyển rất chậm (Trim) -> Lọc cực mạnh (Mượt)
-    } else if (abs_diff < 30) {
+    if (abs_diff < 20) {
+        alpha = 24;  // Di chuyển siêu chậm -> Lọc siêu mượt
+    } else if (abs_diff < 50) {
         alpha = 64;  // Di chuyển chậm -> Lọc vừa
-    } else if (abs_diff < 80) {
+    } else if (abs_diff < 120) {
         alpha = 128; // Di chuyển bình thường -> Lọc nhẹ
     } else {
-        alpha = 256; // Flick tay nhanh -> Vận tốc tối đa, không độ trễ (0ms delay)
+        alpha = 256; // Flick tay -> Lấy giá trị tức thời (0ms delay)
     }
 
     // Cộng thêm 128 (một nửa của 256) để làm tròn số học (Rounding), tránh lỗi kẹt giá trị của phép chia số nguyên
@@ -167,15 +178,39 @@ void HAL_Input_Read(RawInput_t *out)
      * - vbat(1ch): 50us settle + 2x ADC  ~ 1 × (50+100us)  = 150us
      * Tổng ~1.35ms (IIR filter bù nhiễu thay thế settle dài) */
 
-    // 1. Joystick: Settle 20us đủ vì trở kháng joystick thấp
-    out->joy[0] = apply_iir(0, read_mux_avg(MUX_CH_THROTTLE, 20));
-    out->joy[1] = apply_iir(1, read_mux_avg(MUX_CH_YAW,      20));
-    out->joy[2] = apply_iir(2, read_mux_avg(MUX_CH_PITCH,    20));
-    out->joy[3] = apply_iir(3, read_mux_avg(MUX_CH_ROLL,     20));
+    // Tăng Settle time lên 30us để xả hết nhiễu điện dung từ kênh trước
+    // Dùng Median Filter để chặn Spikes (xung nhiễu lớn)
+    uint16_t raw_thr = read_mux_median3(MUX_CH_THROTTLE, 30);
+    out->joy[0] = apply_iir(0, raw_thr);
 
-    // 2. Biến trở: Settle 50us (giảm từ 100us, IIR bù nhiễu)
-    out->pot[0] = apply_iir(4, read_mux_avg(MUX_CH_P1, 50));
-    out->pot[1] = apply_iir(5, read_mux_avg(MUX_CH_P2, 50));
+    // Thu thập 100 mẫu RAW liên tiếp của Throttle để phân tích nhiễu (in ra mỗi 2 giây)
+    static uint16_t raw_samples[100];
+    static int sample_idx = 0;
+    static uint32_t last_print = 0;
+    uint32_t now = xTaskGetTickCount();
+    
+    if ((now - last_print) > pdMS_TO_TICKS(2000)) {
+        if (sample_idx < 100) {
+            raw_samples[sample_idx++] = raw_thr;
+        } else {
+            ESP_LOGI(TAG, "--- MEDIAN FILTERED DUMP (100 samples) ---");
+            for(int i=0; i<100; i+=10) {
+                printf("%u, %u, %u, %u, %u, %u, %u, %u, %u, %u\n",
+                       raw_samples[i], raw_samples[i+1], raw_samples[i+2], raw_samples[i+3], raw_samples[i+4],
+                       raw_samples[i+5], raw_samples[i+6], raw_samples[i+7], raw_samples[i+8], raw_samples[i+9]);
+            }
+            sample_idx = 0;
+            last_print = now;
+        }
+    }
+
+    out->joy[1] = apply_iir(1, read_mux_median3(MUX_CH_YAW,      30));
+    out->joy[2] = apply_iir(2, read_mux_median3(MUX_CH_PITCH,    30));
+    out->joy[3] = apply_iir(3, read_mux_median3(MUX_CH_ROLL,     30));
+  
+    // 2. Biến trở: Settle 50us
+    out->pot[0] = apply_iir(4, read_mux_median3(MUX_CH_P1, 50));
+    out->pot[1] = apply_iir(5, read_mux_median3(MUX_CH_P2, 50));
 
     // 3. Công tắc: Chỉ cần 1 lần đọc (digital signal, không cần avg)
     //    Settle 20us: switch có trở kháng thấp, tín hiệu sạch
@@ -188,7 +223,7 @@ void HAL_Input_Read(RawInput_t *out)
 
     // 4. Pin TX: Settle 200us để điện áp MUX13 (vbat) xả hết trước chu kỳ kế tiếp
     //    Tránh bleed sang joy[0] (MUX1) ở đầu chu kỳ sau → gây ch5↔ch14 correlation
-    out->vbat_raw  = apply_iir(6, read_mux_avg(MUX_CH_VBAT_TX, 200));
+    out->vbat_raw  = apply_iir(6, read_mux_median3(MUX_CH_VBAT_TX, 200));
 }
 
 // ═══════════════════════════════════════════════════════════════════
