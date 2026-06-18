@@ -81,3 +81,14 @@ Xóa b? bi?n eport_id ra kh?i struct d? li?u gamepad_report_t và ng?ng gán nó tr
 
 **ÐÍNH CHÍNH L?I (S? th?t v? Report ID trong BLE HID):**
 Sau khi quan sát ki d? li?u b? 'nh?y lung tung' và 'l?ch tr?c', m?t s? th?t m?i du?c phoi bày: N?u trong b?ng khai báo HID (HID Descriptor) có nh?c d?n \Report ID\, thì gói tin BLE (GATT Notification) **B?T BU?C** ph?i có byte \Report ID\ ? v? trí d?u tiên. Khi chúng ta tháo \eport_id\ ra kh?i c?u trúc d? li?u, Windows v?n m?c d?nh byte d?u tiên nó nh?n du?c là Report ID. K?t qu? là nó l?y byte th?p c?a tr?c X làm Report ID, và xê d?ch (shift) toàn b? các byte còn l?i di 1 v? trí. Ði?u này khi?n byte cao c?a tr?c X ghép v?i byte th?p c?a tr?c Y, t?o ra các con s? vô nghia, nh?y lo?n x?! Vi?c thêm l?i bi?n \eport_id\ vào Payload dã gi?i quy?t tri?t d? l?i l?ch d? li?u này.
+
+## ?? 6. L?i: Tr?c Z (Roll) b? 'tàng hình' do b?c trong Pointer Collection
+**Hi?n tu?ng:**
+Sau khi gi?i quy?t xong l?i c?u trúc và byte shift, m?i tr?c d?u nh?n chu?n xác, DUY NH?T tr?c Z (tuong duong Roll) bi?n m?t không d? l?i d?u v?t. Các tr?c Rx, Ry, Rz, X, Y v?n nh?y bình thu?ng.
+
+**Nguyên nhân g?c r? (Root Cause):**
+Trong HID Descriptor, mình dã nhóm 6 tr?c (X, Y, Z, Rx, Ry, Rz) vào trong m?t t?p h?p v?t lý mang tên \Collection (Pointer)\. 
+Theo tu duy c?a Windows DirectInput: M?t cái \Pointer\ (Con tr? chu?t) thì thu?ng ch? có tr?c X và Y. N?u nó th?y tr?c \Z\ n?m trong Pointer, nó l?p t?c gán mác tr?c Z là \Mouse Scroll Wheel\ (Con lan chu?t). Tuy nhiên, vì chúng ta khai báo \Z\ là giá tr? tuy?t d?i (\Absolute\), trong khi con lan chu?t l?i c?n giá tr? tuong d?i (\Relative\), Windows dã x?y ra xung d?t logic và quy?t d?nh... v?t luôn tr?c Z vào s?t rác!
+
+**Cách kh?c ph?c:**
+Xóa b? hoàn toàn l?p b?c \Collection (Pointer)\. Th? t? do cho c? 6 tr?c n?m tr?c ti?p du?i quy?n qu?n lý c?a \Collection (Joystick)\. Khi không còn b? gán mác là 'con tr?', Windows l?p t?c nh?n di?n \Z\ là m?t tr?c Analog d?c l?p c?a Joystick và hi?n th? nó tr? l?i.

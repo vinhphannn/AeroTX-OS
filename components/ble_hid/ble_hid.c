@@ -29,9 +29,9 @@ static const uint8_t hid_report_desc[] = {
     0x09, 0x30,        //     Usage (X)  -> Yaw
     0x09, 0x31,        //     Usage (Y)  -> Throttle
     0x09, 0x32,        //     Usage (Z)  -> Roll
-    0x09, 0x35,        //     Usage (Rz) -> Pitch
-    0x09, 0x33,        //     Usage (Rx) -> P1
-    0x09, 0x34,        //     Usage (Ry) -> P2
+    0x09, 0x33,        //     Usage (Rx) -> Pitch
+    0x09, 0x34,        //     Usage (Ry) -> P1
+    0x09, 0x35,        //     Usage (Rz) -> P2
     0x15, 0x00,        //     Logical Minimum (0)
     0x27, 0xFF, 0xFF, 0x00, 0x00, // Logical Maximum (65535)
     0x75, 0x10,        //     Report Size (16 bits)
@@ -56,9 +56,9 @@ typedef struct {
     uint16_t x;      // Yaw
     uint16_t y;      // Throttle
     uint16_t z;      // Roll
-    uint16_t rz;     // Pitch
-    uint16_t rx;     // P1
-    uint16_t ry;     // P2
+    uint16_t rx;     // Pitch
+    uint16_t ry;     // P1
+    uint16_t rz;     // P2
     uint16_t buttons;
 } __attribute__((packed)) gamepad_report_t;
 
@@ -447,9 +447,9 @@ void ble_hid_send_report(uint16_t throttle, uint16_t yaw, uint16_t pitch, uint16
     report.x  = v_yaw;
     report.y  = v_thr;
     report.z  = v_roll;
-    report.rz = v_pitch;
-    report.rx = v_p1;
-    report.ry = v_p2;
+    report.rx = v_pitch;
+    report.ry = v_p1;
+    report.rz = v_p2;
     report.buttons = buttons;
 
     struct os_mbuf *om = ble_hs_mbuf_from_flat(&report, sizeof(report));
