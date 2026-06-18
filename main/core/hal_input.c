@@ -70,16 +70,16 @@ static uint16_t read_mux_raw(uint8_t mux_ch, uint32_t settle_us)
     return (uint16_t)val;
 }
 
-// Lấy 8 mẫu, loại bỏ 2 mẫu cao nhất và 2 mẫu thấp nhất (Spikes), trung bình 4 mẫu còn lại.
-// Đây là bộ lọc Alpha-Trimmed Mean, vô địch trong việc chống lại nhiễu xung kéo dài (burst noise).
+// Lấy 5 mẫu, loại bỏ 1 mẫu cao nhất và 1 mẫu thấp nhất (Spikes), trung bình 3 mẫu còn lại.
+// Vẫn giữ được khả năng chống Burst Noise nhưng giảm 40% thời gian thực thi để tránh Watchdog (TWDT).
 static uint16_t read_mux_alpha_trimmed(uint8_t mux_ch, uint32_t settle_us)
 {
     mux_select(mux_ch);
     esp_rom_delay_us(settle_us);
     
-    int v[8];
+    int v[5];
     uint64_t start = esp_timer_get_time();
-    for (int i=0; i<8; i++) {
+    for (int i=0; i<5; i++) {
         adc_oneshot_read(s_adc_handle, ADC_CHANNEL, &v[i]);
     }
     uint64_t dur = esp_timer_get_time() - start;
@@ -88,17 +88,17 @@ static uint16_t read_mux_alpha_trimmed(uint8_t mux_ch, uint32_t settle_us)
         ESP_LOGW(TAG, "Slow ADC trimmed read: %lluus on CH %d", dur, mux_ch);
     }
     
-    // Bubble sort 8 phần tử
-    for (int i = 0; i < 7; i++) {
-        for (int j = i + 1; j < 8; j++) {
+    // Bubble sort 5 phần tử
+    for (int i = 0; i < 4; i++) {
+        for (int j = i + 1; j < 5; j++) {
             if (v[i] > v[j]) {
                 int t = v[i]; v[i] = v[j]; v[j] = t;
             }
         }
     }
     
-    // Trung bình 4 phần tử ở giữa (index 2, 3, 4, 5)
-    return (uint16_t)((v[2] + v[3] + v[4] + v[5]) / 4);
+    // Trung bình 3 phần tử ở giữa (index 1, 2, 3)
+    return (uint16_t)((v[1] + v[2] + v[3]) / 3);
 }
 
 // FIX NOISE: Adaptive IIR Low-Pass Filter with Deadband
@@ -184,33 +184,8 @@ void HAL_Input_Read(RawInput_t *out)
      * Tổng ~1.35ms (IIR filter bù nhiễu thay thế settle dài) */
 
     // Tăng Settle time lên 30us để xả hết nhiễu điện dung từ kênh trước
-    // Dùng Alpha-Trimmed Filter (8 mẫu) để chặn Spikes (xung nhiễu lớn kéo dài)
-    uint16_t raw_thr = read_mux_alpha_trimmed(MUX_CH_THROTTLE, 30);
-    out->joy[0] = apply_iir(0, raw_thr);
-
-    // TOOL: Phân tích phổ nhiễu tần số cao (Chạy 1 lần duy nhất sau khi boot)
-    static bool done_fast_dump = false;
-    if (!done_fast_dump) {
-        done_fast_dump = true;
-        uint16_t fast_samples[200];
-        mux_select(MUX_CH_THROTTLE);
-        esp_rom_delay_us(100);
-        for(int i=0; i<200; i++) {
-            int val;
-            adc_oneshot_read(s_adc_handle, ADC_CHANNEL, &val);
-            fast_samples[i] = (uint16_t)val;
-            esp_rom_delay_us(500); // Lấy mẫu mỗi 500us -> Tần số 2kHz
-        }
-        ESP_LOGW(TAG, "=========================================================");
-        ESP_LOGW(TAG, "--- FAST BURST DUMP (2kHz, 200 samples) ---");
-        for(int i=0; i<200; i+=10) {
-            printf("%u, %u, %u, %u, %u, %u, %u, %u, %u, %u\n",
-                   fast_samples[i], fast_samples[i+1], fast_samples[i+2], fast_samples[i+3], fast_samples[i+4],
-                   fast_samples[i+5], fast_samples[i+6], fast_samples[i+7], fast_samples[i+8], fast_samples[i+9]);
-        }
-        ESP_LOGW(TAG, "=========================================================");
-    }
-
+    // Dùng Alpha-Trimmed Filter (5 mẫu) để chặn Spikes (xung nhiễu lớn kéo dài)
+    out->joy[0] = apply_iir(0, read_mux_alpha_trimmed(MUX_CH_THROTTLE, 30));
     out->joy[1] = apply_iir(1, read_mux_alpha_trimmed(MUX_CH_YAW,      30));
     out->joy[2] = apply_iir(2, read_mux_alpha_trimmed(MUX_CH_PITCH,    30));
     out->joy[3] = apply_iir(3, read_mux_alpha_trimmed(MUX_CH_ROLL,     30));
