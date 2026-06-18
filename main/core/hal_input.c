@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
+#include <stdlib.h>
 
 static const char *TAG = "HAL_INPUT";
 
@@ -84,17 +85,48 @@ static uint16_t read_mux_avg(uint8_t mux_ch, uint32_t settle_us)
     return (uint16_t)((v1 + v2) / 2);
 }
 
-// FIX NOISE: IIR Low-Pass Filter (Exponential Moving Average)
-// alpha nhỏ = lọc mạnh (lag nhiều), alpha lớn = lọc ít (phản hồi nhanh)
-// alpha=0.75: thời hằng siêu ngắn (lag gần như bằng 0)
-#define IIR_ALPHA_SCALED  192  // alpha = 0.75
+// FIX NOISE: Adaptive IIR Low-Pass Filter with Deadband
+// Đây là thuật toán lọc nhiễu thông minh tốt nhất cho Joystick FPV:
+// - Nhiễu nhỏ (Jitter tĩnh): Bỏ qua hoàn toàn (Deadband)
+// - Di chuyển chậm: Lọc cực mạnh để mượt mà (chống stair-stepping)
+// - Di chuyển nhanh (Flick tay): Bỏ qua bộ lọc (Alpha = 100%), phản hồi 0ms
 static uint16_t s_joy_filtered[7] = {2048, 2048, 2048, 2048, 2048, 2048, 2048}; // [0-3]joy, [4-5]pot, [6]vbat
 
-// index: 0-5 joy/pot (alpha=0.25), 6 vbat (alpha=0.01 cực chậm)
+// index: 0-5 joy/pot, 6 vbat
 static uint16_t apply_iir(uint8_t idx, uint16_t new_val)
 {
-    uint32_t alpha = (idx == 6) ? 3 : IIR_ALPHA_SCALED; // Pin: siêu chậm, Joy: siêu nhanh
-    uint32_t filtered = (alpha * new_val + (256 - alpha) * s_joy_filtered[idx]) / 256;
+    if (idx == 6) {
+        // Pin (VBAT) thay đổi cực chậm -> Lọc siêu chậm (Alpha = 3/256)
+        uint32_t alpha = 3;
+        uint32_t filtered = (alpha * new_val + (256 - alpha) * s_joy_filtered[idx] + 128) / 256;
+        s_joy_filtered[idx] = (uint16_t)filtered;
+        return s_joy_filtered[idx];
+    }
+    
+    uint16_t old_val = s_joy_filtered[idx];
+    int16_t diff = (int16_t)new_val - (int16_t)old_val;
+    uint16_t abs_diff = abs(diff);
+    
+    // 1. Deadband (Triệt tiêu rung kim): ADC 12-bit có nhiễu dao động tĩnh 1-3 đơn vị.
+    // Nếu dao động < 4 (tương đương ~1 PWM), khóa chặt giá trị, tay cầm đứng im như đá!
+    if (abs_diff <= 3) {
+        return old_val;
+    }
+    
+    // 2. Dynamic EMA (Exponential Moving Average)
+    uint32_t alpha;
+    if (abs_diff < 10) {
+        alpha = 32;  // Di chuyển rất chậm (Trim) -> Lọc cực mạnh (Mượt)
+    } else if (abs_diff < 30) {
+        alpha = 64;  // Di chuyển chậm -> Lọc vừa
+    } else if (abs_diff < 80) {
+        alpha = 128; // Di chuyển bình thường -> Lọc nhẹ
+    } else {
+        alpha = 256; // Flick tay nhanh -> Vận tốc tối đa, không độ trễ (0ms delay)
+    }
+
+    // Cộng thêm 128 (một nửa của 256) để làm tròn số học (Rounding), tránh lỗi kẹt giá trị của phép chia số nguyên
+    uint32_t filtered = (alpha * new_val + (256 - alpha) * old_val + 128) / 256;
     s_joy_filtered[idx] = (uint16_t)filtered;
     return s_joy_filtered[idx];
 }
