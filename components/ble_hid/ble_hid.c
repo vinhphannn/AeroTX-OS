@@ -18,7 +18,7 @@ static const char *TAG = "BLE_NIMBLE_HID";
 // 6 Axes (Unsigned 16-bit), 16 Buttons
 static const uint8_t hid_report_desc[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x04,        // Usage (Joystick)
+    0x09, 0x05,        // Usage (Game Pad)
     0xA1, 0x01,        // Collection (Application)
     
     0x85, 0x01,        //   Report ID (1)
@@ -237,8 +237,8 @@ static void ble_hid_advertise(void) {
     
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     
-    // Appearance 0x03C3 (Joystick)
-    fields.appearance = 0x03C3;
+    // Appearance 0x03C4 (Gamepad) -> Tương thích tốt hơn với Android/iOS Game Controller Framework
+    fields.appearance = 0x03C4;
     fields.appearance_is_present = 1;
 
     fields.uuids16 = (ble_uuid16_t[]) {
