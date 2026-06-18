@@ -13,8 +13,21 @@
 #include "esp_timer.h"
 #include "ble_hid.h"
 #include <string.h>
+#include <stdlib.h>
 
 static const char *TAG = "RADIO_TASK_ELRS";
+
+// CRSF Output Deadband: Chỉ cập nhật giá trị gửi đi nếu thay đổi > 1us.
+// Khi thay đổi íe hơn 2us, giữ nguyên giá trị cũ -> chống nhiễu nhỏ gầy run servo/motor khi hover.
+// Độ trễ: 0ms (vẫn gửi CRSF 250Hz, chỉ giá trị trong frame là không đổi nếu nằm trong vd)
+#define CRSF_OUT_DEADBAND  2
+static uint16_t s_crsf_prev[4] = {1000, 1500, 1500, 1500}; // Thr/Yaw/Pit/Rol
+static inline uint16_t rc_deadband(uint16_t new_val, uint8_t idx) {
+    if (abs((int)new_val - (int)s_crsf_prev[idx]) > CRSF_OUT_DEADBAND) {
+        s_crsf_prev[idx] = new_val;
+    }
+    return s_crsf_prev[idx];
+}
 
 void radio_task(void *pvParameters)
 {
@@ -128,10 +141,10 @@ void radio_task(void *pvParameters)
         for (int i = 0; i < 16; i++) crsf_channels[i] = 1500;
 
         // Ch1-4: Joy (channels[0-3]) — đã đúng thứ tự từ mixer
-        crsf_channels[0] = snap.channels[0];  // Ch1: Throttle
-        crsf_channels[1] = snap.channels[1];  // Ch2: Yaw
-        crsf_channels[2] = snap.channels[2];  // Ch3: Pitch
-        crsf_channels[3] = snap.channels[3];  // Ch4: Roll
+        crsf_channels[0] = rc_deadband(snap.channels[0], 0);  // Ch1: Throttle
+        crsf_channels[1] = rc_deadband(snap.channels[1], 1);  // Ch2: Yaw
+        crsf_channels[2] = rc_deadband(snap.channels[2], 2);  // Ch3: Pitch
+        crsf_channels[3] = rc_deadband(snap.channels[3], 3);  // Ch4: Roll
 
         // Ch5-8: 4 công tắc 2 nấc (channels[4-7])
         crsf_channels[4] = snap.channels[4];  // Ch5: ARM
