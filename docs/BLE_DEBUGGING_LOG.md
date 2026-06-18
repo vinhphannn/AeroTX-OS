@@ -92,3 +92,10 @@ Theo tu duy c?a Windows DirectInput: M?t cái \Pointer\ (Con tr? chu?t) thì thu?n
 
 **Cách kh?c ph?c:**
 Xóa b? hoàn toàn l?p b?c \Collection (Pointer)\. Th? t? do cho c? 6 tr?c n?m tr?c ti?p du?i quy?n qu?n lý c?a \Collection (Joystick)\. Khi không còn b? gán mác là 'con tr?', Windows l?p t?c nh?n di?n \Z\ là m?t tr?c Analog d?c l?p c?a Joystick và hi?n th? nó tr? l?i.
+
+
+**Fixing iOS Support (FPV.SkyDive Disconnected Issue):**
+Ði?n tho?i (d?c bi?t là iOS) s? d?ng b? GCController framework r?t kh?t khe. Nó s? B? QUA tay c?m n?u:
+1. Thi?t b? khai báo là Joystick (0x04) thay vì Game Pad (0x05).
+2. B?ng c?u trúc HID thi?u v?ng nút D-Pad (Hat Switch). Apple b?t bu?c m?t Gamepad chu?n ph?i có nút di?u hu?ng D-Pad, n?u không nó s? t? ch?i t?o d?i tu?ng GCExtendedGamepad và các game nhu FPV.SkyDive s? không th? nhìn th?y tay c?m.
+Cách gi?i quy?t: Mình dã d?i l?i thành Game Pad (0x05), Appearance 0x03C4, và g?n thêm m?t b? mô ph?ng D-Pad ?o (Hat Switch, 1 byte) luôn ? tr?ng thái Neutral vào gói d? li?u d? dánh l?a h? di?u hành iOS.

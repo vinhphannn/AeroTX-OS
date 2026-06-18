@@ -49,6 +49,23 @@ static const uint8_t hid_report_desc[] = {
     0x95, 0x10,        //   Report Count (16 buttons)
     0x81, 0x02,        //   Input (Data, Variable, Absolute)
     
+    // D-Pad (Hat Switch) - Required by iOS to map to GCController
+    0x05, 0x01,        //   Usage Page (Generic Desktop Ctrls)
+    0x09, 0x39,        //   Usage (Hat switch)
+    0x15, 0x01,        //   Logical Minimum (1)
+    0x25, 0x08,        //   Logical Maximum (8)
+    0x35, 0x00,        //   Physical Minimum (0)
+    0x46, 0x3B, 0x01,  //   Physical Maximum (315)
+    0x65, 0x14,        //   Unit (Eng Rot:Angular Pos)
+    0x75, 0x04,        //   Report Size (4 bits)
+    0x95, 0x01,        //   Report Count (1)
+    0x81, 0x42,        //   Input (Data, Variable, Absolute, Null State)
+    
+    // Padding
+    0x75, 0x04,        //   Report Size (4 bits)
+    0x95, 0x01,        //   Report Count (1)
+    0x81, 0x03,        //   Input (Constant, Variable, Absolute)
+    
     0xC0               // End Collection
 };
 
@@ -59,6 +76,7 @@ typedef struct {
     uint16_t rx;     // Pitch
     uint16_t ry;     // P1
     uint16_t rz;     // P2
+    uint8_t  dpad;   // D-Pad (0 = neutral)
     uint16_t buttons;
 } __attribute__((packed)) gamepad_report_t;
 
@@ -450,6 +468,7 @@ void ble_hid_send_report(uint16_t throttle, uint16_t yaw, uint16_t pitch, uint16
     report.rx = v_pitch;
     report.ry = v_p1;
     report.rz = v_p2;
+    report.dpad = 0; // Neutral state (không bấm)
     report.buttons = buttons;
 
     struct os_mbuf *om = ble_hs_mbuf_from_flat(&report, sizeof(report));
