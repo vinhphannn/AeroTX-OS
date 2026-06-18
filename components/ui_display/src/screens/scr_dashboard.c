@@ -73,6 +73,7 @@ lv_obj_t* scr_dashboard_create(void) {
     lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_hor(header, 12, 0);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_CLICKABLE);
     disable_scroll(header);
 
     lv_obj_t *v_cont = lv_obj_create(header);
@@ -82,6 +83,7 @@ lv_obj_t* scr_dashboard_create(void) {
     lv_obj_set_flex_flow(v_cont, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_all(v_cont, 0, 0);
     lv_obj_set_style_pad_gap(v_cont, 8, 0);
+    lv_obj_clear_flag(v_cont, LV_OBJ_FLAG_CLICKABLE);
     disable_scroll(v_cont);
 
     label_vbat_tx = lv_label_create(v_cont);
@@ -104,6 +106,7 @@ lv_obj_t* scr_dashboard_create(void) {
     lv_obj_set_flex_flow(sw_tray, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(sw_tray, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_gap(sw_tray, 18, 0);
+    lv_obj_clear_flag(sw_tray, LV_OBJ_FLAG_CLICKABLE);
     disable_scroll(sw_tray);
 
     for(int i=0; i<4; i++) {
@@ -121,6 +124,7 @@ lv_obj_t* scr_dashboard_create(void) {
     lv_obj_set_style_border_width(body, 0, 0);
     lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(body, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_CLICKABLE);
     disable_scroll(body);
 
     bar_thr   = create_channel_row(body, "THR", lv_color_hex(0x00FF00), &lab_thr_val);
@@ -135,6 +139,7 @@ lv_obj_t* scr_dashboard_create(void) {
     lv_obj_set_flex_flow(footer, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(footer, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_hor(footer, 12, 0);
+    lv_obj_clear_flag(footer, LV_OBJ_FLAG_CLICKABLE);
     disable_scroll(footer);
 
     label_status = lv_label_create(footer);
@@ -146,6 +151,7 @@ lv_obj_t* scr_dashboard_create(void) {
     lv_obj_set_flex_flow(mode_led_cont, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(mode_led_cont, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_gap(mode_led_cont, 10, 0);
+    lv_obj_clear_flag(mode_led_cont, LV_OBJ_FLAG_CLICKABLE);
     disable_scroll(mode_led_cont);
 
     for(int i=0; i<2; i++) {
@@ -165,7 +171,13 @@ static void update_active_led(lv_obj_t *led, bool active, lv_color_t color) {
 }
 
 void scr_dashboard_update(UIData_t *data) {
-    if (!data->is_connected) {
+    if (data->sys_state == 2) {
+        // Chế độ Simulator
+        lv_label_set_text(label_status, data->is_connected ? "SIM: CONNECTED" : "SIM: WAITING...");
+        lv_obj_set_style_text_color(label_status, data->is_connected ? lv_color_hex(0x00FFFF) : lv_color_hex(0xFFFF00), 0);
+        lv_label_set_text(label_vbat_rx, "BLE HID");
+        lv_label_set_text(label_rssi, "");
+    } else if (!data->is_connected) {
         lv_label_set_text(label_status, "STATION READY");
         lv_obj_set_style_text_color(label_status, lv_color_hex(0xAAAAAA), 0);
         lv_label_set_text(label_vbat_rx, "RX: --V");
@@ -213,6 +225,5 @@ void scr_dashboard_restore_status(UIData_t *data) {
 }
 
 void scr_dashboard_set_sim_status(bool connected) {
-    lv_label_set_text(label_status, connected ? "SIM ACTIVE" : "SIM OFF");
-    lv_obj_set_style_text_color(label_status, lv_color_hex(0x00FFFF), 0);
+    // Không dùng hàm này nữa, đã gộp vào scr_dashboard_update
 }

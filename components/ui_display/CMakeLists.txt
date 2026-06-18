@@ -4,6 +4,7 @@ set(srcs
     "src/porting/lv_port_indev.c"
     "src/core/ui_manager.c"
     "src/screens/scr_dashboard.c"
+    "src/screens/scr_telemetry.c"
     "src/screens/scr_menu.h"
     "src/screens/scr_menu.c"
     "src/screens/scr_calibration.c"

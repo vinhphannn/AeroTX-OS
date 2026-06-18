@@ -12,6 +12,7 @@
  */
 
 #include "core/sys_state.h"
+#include "core/sys_config.h"
 #include "core/hal_input.h"
 #include "core/timing_test.h"   // <<< TEST: đo thời gian thực thi
 #include "esp_log.h"
@@ -242,6 +243,11 @@ void sensor_task(void *pvParameters)
                 g_state.tx_vbat    = snap.tx_vbat;
                 g_state.tx_vbat_pct = snap.tx_vbat_pct;
                 memcpy(g_state.raw_joy, snap.raw_joy, sizeof(g_state.raw_joy));
+                
+                // Cập nhật timestamp cho luồng Latency Debug
+                g_state.trace.frame_id = frame;
+                g_state.trace.ts_sampled = (uint32_t)esp_timer_get_time();
+                
                 xSemaphoreGive(sys_mutex);
             } else {
                 sensor_miss_count++;
@@ -254,13 +260,16 @@ void sensor_task(void *pvParameters)
 
         // Diagnostic: in report mỗi 1 giây (250 frame × 4ms)
         if (frame % 250 == 0) {
+#if LOG_TIMING_REPORT
             ESP_LOGI(TAG, "[DIAG] sensor_miss=%lu / %lu frames (%.1f%%)",
                      sensor_miss_count, frame,
                      (float)sensor_miss_count * 100.0f / frame);
             TIMING_REPORT();
+#endif
             // ── DEBUG MUX SCAN: Xác nhận wiring vật lý ──────────────────
-            // Xóa dòng này khi đã xác nhận wiring đúng hoàn toàn!
+#if LOG_MUX_SCAN_RAW
             HAL_Input_Debug_Scan();
+#endif
         }
 
         // Chạy đúng 250Hz, vTaskDelayUntil bù thời gian đọc ADC.

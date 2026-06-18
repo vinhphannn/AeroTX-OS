@@ -4,7 +4,7 @@
 
 ## 🚀 Đặc điểm kỹ thuật nổi bật
 - **Dual-core Architecture (FreeRTOS):**
-  - **Core 0:** Dành riêng (Dedicated) cho hệ thống Radio (nRF24/ELRS) đạt tần số quét 250Hz không gián đoạn.
+  - **Core 0:** Dành riêng (Dedicated) cho hệ thống Radio (CRSF/ELRS) đạt tần số quét 250Hz không gián đoạn.
   - **Core 1:** Chạy hệ thống đồ họa UI (LVGL) và quản lý thẻ nhớ, đảm bảo không bao giờ lock tài nguyên sóng.
 - **Flight Modes Framework:** Chuyển đổi mượt mà giữa các chế độ Bay (Flight), Cài đặt (Menu), và Giả lập (Simulator BLE HID).
 - **Pro Features:** Trộn kênh (Mixer & Logic), cấu hình điểm chết (Expo/Rates), và bảng điều khiển Telemetry theo thời gian thực.

@@ -16,6 +16,20 @@ typedef struct {
     bool     is_connected;
     uint16_t p1, p2;
     bool     pid_updated;
+    
+    // Thêm các trường Telemetry mở rộng
+    float    current_drone;
+    uint8_t  batt_remaining;
+    int8_t   snr;
+    uint8_t  link_quality;
+    int32_t  gps_lat;
+    int32_t  gps_lon;
+    float    gps_alt;
+    uint8_t  gps_sats;
+    float    drone_pitch;
+    float    drone_roll;
+    float    drone_yaw;
+    char     flight_mode[16];
 } UIData_t;
 
 typedef enum {

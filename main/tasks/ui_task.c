@@ -1,7 +1,7 @@
 /**
  * ui_task.c - Display & UI Management Task
  * ==========================================
- * Chạy trên Core 1, 30Hz (33ms/frame) - đủ mượt cho màn hình.
+ * Chạy trên Core 1, 60Hz (16ms/frame) - siêu mượt cho màn hình.
  *
  * v5.0 FIX:
  *   - vTaskDelay(30ms)           → vTaskDelayUntil(33ms) cố định
@@ -13,8 +13,11 @@
  */
 
 #include "core/sys_state.h"
+#include "core/sys_config.h"
 #include "ui_display.h"
+#include "ble_hid.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <string.h>
 
 static const char *TAG = "UI_TASK";
@@ -37,6 +40,8 @@ void ui_task(void *pvParameters)
     bool     last_armed       = false;
     float    last_vbat_drone  = 0.0f;
     float    last_vbat_tx     = 0.0f;
+    uint32_t last_telem_ms    = 0;
+    bool     last_ble_conn    = false;
 
     // Diagnostic: đếm số frame bị skip do mutex bận
     uint32_t ui_miss_count    = 0;
@@ -77,18 +82,21 @@ void ui_task(void *pvParameters)
             case 2: // SIM
                 Display_HideMenu();
                 Display_SetSilence(true);
+                memset(last_chans, 0, sizeof(last_chans)); // Force re-render để cập nhật chữ SIM
                 break;
             default:
                 break;
             }
             last_mode = local_state.sys_mode;
+#if LOG_SYS_MODE_CHANGES
             ESP_LOGI(TAG, "Mode changed → %d", local_state.sys_mode);
+#endif
         }
 
         // ---------------------------------------------------------------
-        // B3: Cập nhật Dashboard (Mode FLIGHT hoặc MENU)
+        // B3: Cập nhật Dashboard (Mode FLIGHT, MENU, hoặc SIM)
         // ---------------------------------------------------------------
-        if (local_state.sys_mode == 0 || local_state.sys_mode == 1) {
+        if (local_state.sys_mode == 0 || local_state.sys_mode == 1 || local_state.sys_mode == 2) {
 
             // Kiểm tra có gì thay đổi đáng kể không
             bool need_render = false;
@@ -123,6 +131,17 @@ void ui_task(void *pvParameters)
                 last_vbat_tx = local_state.tx_vbat;
                 need_render  = true;
             }
+            if (local_state.telemetry.last_recv_ms != last_telem_ms) {
+                last_telem_ms = local_state.telemetry.last_recv_ms;
+                need_render = true;
+            }
+            if (local_state.sys_mode == 2) {
+                bool current_ble = ble_hid_is_connected();
+                if (current_ble != last_ble_conn) {
+                    last_ble_conn = current_ble;
+                    need_render = true;
+                }
+            }
 
             if (need_render) {
                 // ── Joystick (channels[0-3]) ──────────────────────────
@@ -145,27 +164,49 @@ void ui_task(void *pvParameters)
                 ui_data.p1          = local_state.channels[10]; // Ch11: P1
                 ui_data.p2          = local_state.channels[11]; // Ch12: P2
 
-                // ── Telemetry ─────────────────────────────────────────
+                // ── Telemetry & Connection ─────────────────────────────────────────
                 ui_data.vbat_tx     = local_state.tx_vbat;
                 ui_data.vbat_tx_pct = local_state.tx_vbat_pct;
-                ui_data.vbat_drone  = local_state.telemetry.vbat_drone;
-                ui_data.rssi        = local_state.telemetry.rssi;
-                ui_data.is_connected = last_connected;
+                
+                if (local_state.sys_mode == 2) {
+                    // Chế độ Sim: Trạng thái kết nối lấy từ Bluetooth
+                    ui_data.is_connected = ble_hid_is_connected();
+                } else {
+                    // Chế độ Bay: Trạng thái lấy từ Radio Telemetry
+                    ui_data.vbat_drone  = local_state.telemetry.vbat_drone;
+                    ui_data.rssi        = local_state.telemetry.rssi;
+                    ui_data.is_connected = last_connected;
+                }
+                
+                // Copy Telemetry mở rộng
+                ui_data.current_drone = local_state.telemetry.current_drone;
+                ui_data.batt_remaining = local_state.telemetry.batt_remaining;
+                ui_data.snr = local_state.telemetry.snr;
+                ui_data.link_quality = local_state.telemetry.link_quality;
+                ui_data.gps_lat = local_state.telemetry.gps_lat;
+                ui_data.gps_lon = local_state.telemetry.gps_lon;
+                ui_data.gps_alt = local_state.telemetry.gps_alt;
+                ui_data.gps_sats = local_state.telemetry.gps_sats;
+                ui_data.drone_pitch = local_state.telemetry.pitch;
+                ui_data.drone_roll = local_state.telemetry.roll;
+                ui_data.drone_yaw = local_state.telemetry.yaw;
+                strncpy(ui_data.flight_mode, local_state.telemetry.flight_mode, sizeof(ui_data.flight_mode)-1);
 
                 Display_UpdateDashboard(&ui_data);
+
+                // Latency Debug: In log mỗi khi UI render frame mới (mỗi ~2 giây)
+#if LOG_LATENCY_DEBUG
+                static uint32_t ui_log_cnt = 0;
+                if (ui_log_cnt++ % 120 == 0) {
+                    uint32_t render_ts = (uint32_t)esp_timer_get_time();
+                    uint32_t lag = render_ts - local_state.trace.ts_sampled;
+                    ESP_LOGI("LATENCY_DEBUG", "[UI] Frame %lu | Sensor -> UI Render: %lu us (%.2f ms)", 
+                             local_state.trace.frame_id, lag, lag / 1000.0f);
+                }
+#endif
             }
         }
-        // ---------------------------------------------------------------
-        // B4: Sim Mode - cập nhật trạng thái kết nối BLE (chậm ~2Hz)
-        // ---------------------------------------------------------------
-        else if (local_state.sys_mode == 2) {
-            static uint32_t last_sim_tick = 0;
-            uint32_t now = xTaskGetTickCount();
-            if (now - last_sim_tick > pdMS_TO_TICKS(500)) {
-                Display_UpdateSimStatus(false);
-                last_sim_tick = now;
-            }
-        }
+        // (Đã gộp xử lý hiển thị Sim vào B3)
 
         // ---------------------------------------------------------------
         // B5: Timer bay - cập nhật mỗi frame (30Hz)
@@ -183,15 +224,17 @@ void ui_task(void *pvParameters)
                 ESP_LOGW(TAG, "[DIAG] UI miss rate: %lu%% (%lu/%lu frames) - Check mutex contention!",
                          miss_pct, ui_miss_count, ui_frame_count);
             } else {
+#if LOG_UI_DIAGNOSTICS
                 ESP_LOGI(TAG, "[DIAG] UI healthy: miss=%lu%% | frames=%lu",
                          miss_pct, ui_frame_count);
+#endif
             }
         }
 
         // ---------------------------------------------------------------
-        // B7: Chạy đúng 30Hz (33ms/frame)
+        // B7: Chạy đúng 60Hz (16ms/frame)
         // vTaskDelayUntil tự bù thời gian xử lý LVGL render
         // ---------------------------------------------------------------
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(33));
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(16));
     }
 }

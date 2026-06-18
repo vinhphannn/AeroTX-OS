@@ -37,7 +37,7 @@ Toàn bộ hệ thống vận hành theo 3 trạng thái độc lập dựa trê
 *   **Input**: Joystick trái/phải dùng làm phím điều hướng (Up/Down/Select).
 
 ### 🎮 nấc 3: SIMULATOR MODE
-*   **Radio (Core 0)**: Tắt nRF24L01 để tiết kiệm pin. Kích hoạt Bluetooth BLE HID.
+*   **Radio (Core 0)**: Tắt RF để tiết kiệm pin. Kích hoạt Bluetooth BLE HID.
 *   **UI (Core 1)**: Hiển thị trạng thái kết nối "Sim Mode Active".
 *   **Input**: Chuyển đổi dữ liệu RC sang chuẩn Gamepad PC.
 

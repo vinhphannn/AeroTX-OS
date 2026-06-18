@@ -22,7 +22,7 @@ static lv_obj_t* page_rf_link_create(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(list_rf, lv_color_hex(0x0A0A0A), 0);
     lv_obj_set_style_border_width(list_rf, 0, 0);
 
-    const char* opts[] = {"NRF24 CHANNEL", "RF POWER (PA)", "BLE MODE", "BINDING"};
+    const char* opts[] = {"CRSF CHANNEL", "RF POWER (PA)", "BLE MODE", "BINDING"};
     for(int i=0; i<4; i++) {
         lv_obj_t *btn = lv_list_add_btn(list_rf, NULL, opts[i]);
         lv_obj_set_style_bg_opa(btn, 0, 0);

@@ -1,6 +1,8 @@
 #include "crsf.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
+#include "core/sys_state.h"
+#include "esp_timer.h"
 #include <string.h>
 
 #define CRSF_UART_PORT      UART_NUM_2
@@ -109,3 +111,89 @@ void crsf_send_channels(const uint16_t channels[16]) {
     // Write to UART
     uart_write_bytes(CRSF_UART_PORT, (const char *)packet, CRSF_PACKET_SIZE);
 }
+
+/**
+ * Read from UART and parse Telemetry frames
+ */
+void crsf_receive_telemetry(TelemetryData_t *telemetry) {
+    static uint8_t rx_buf[256];
+    static int rx_idx = 0;
+    
+    // Đọc tất cả dữ liệu có sẵn vào buffer tĩnh
+    int len = uart_read_bytes(CRSF_UART_PORT, &rx_buf[rx_idx], sizeof(rx_buf) - rx_idx, 0);
+    if (len > 0) {
+        rx_idx += len;
+    }
+    
+    if (rx_idx < 4) return;
+    
+    int i = 0;
+    while (i < rx_idx - 2) { // Cần ít nhất 3 byte (Sync, Len, Type)
+        // Tìm Sync Byte hợp lệ (0xEA = Telemetry, 0xC8, 0xEE)
+        if (rx_buf[i] == 0xEA || rx_buf[i] == 0xC8 || rx_buf[i] == 0xEE || rx_buf[i] == CRSF_ADDRESS_RADIO_TRANSMITTER) {
+            uint8_t frame_len = rx_buf[i+1];
+            
+            // Frame quá dài hoặc quá ngắn -> rác, bỏ qua Sync này
+            if (frame_len > 64 || frame_len < 2) {
+                i++;
+                continue;
+            }
+            
+            // Nếu chưa nhận đủ nguyên một frame -> Dừng lại chờ luồng tiếp theo đọc thêm
+            if (i + 2 + frame_len > rx_idx) {
+                break;
+            }
+            
+            uint8_t type = rx_buf[i+2];
+            uint8_t crc = crsf_compute_crc(&rx_buf[i+2], frame_len - 1);
+            
+            if (crc == rx_buf[i + 2 + frame_len - 1]) { // CRC khớp!
+                telemetry->link_active = true;
+                telemetry->last_recv_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                
+                uint8_t *payload = &rx_buf[i+3];
+                if (type == CRSF_FRAMETYPE_BATTERY_SENSOR) {
+                    telemetry->vbat_drone = ((payload[0] << 8) | payload[1]) / 10.0f;
+                    telemetry->current_drone = ((payload[2] << 8) | payload[3]) / 10.0f;
+                    telemetry->batt_remaining = payload[7];
+                } else if (type == CRSF_FRAMETYPE_LINK_STATISTICS) {
+                    telemetry->rssi = -1 * payload[7]; // Downlink RSSI
+                    telemetry->link_quality = payload[8]; // Downlink LQ
+                    telemetry->snr = (int8_t)payload[9]; // Downlink SNR
+                } else if (type == CRSF_FRAMETYPE_GPS) {
+                    telemetry->gps_lat = (payload[0]<<24) | (payload[1]<<16) | (payload[2]<<8) | payload[3];
+                    telemetry->gps_lon = (payload[4]<<24) | (payload[5]<<16) | (payload[6]<<8) | payload[7];
+                    telemetry->gps_alt = (((payload[12]<<8) | payload[13]) - 1000);
+                    telemetry->gps_sats = payload[14];
+                } else if (type == CRSF_FRAMETYPE_ATTITUDE) {
+                    int16_t pt = (payload[0]<<8) | payload[1];
+                    int16_t ro = (payload[2]<<8) | payload[3];
+                    int16_t ya = (payload[4]<<8) | payload[5];
+                    telemetry->pitch = pt / 10000.0f;
+                    telemetry->roll = ro / 10000.0f;
+                    telemetry->yaw = ya / 10000.0f;
+                } else if (type == CRSF_FRAMETYPE_FLIGHT_MODE) {
+                    int slen = frame_len - 2; // Type + Payload
+                    if (slen > 15) slen = 15;
+                    memcpy(telemetry->flight_mode, payload, slen);
+                    telemetry->flight_mode[slen] = 0;
+                }
+                
+                // Nhảy qua frame này
+                i += (frame_len + 2);
+                continue;
+            }
+        }
+        // Nêu không phải sync byte hoặc sai CRC, dò byte tiếp theo
+        i++;
+    }
+    
+    // Dời các byte chưa xử lý xong về đầu buffer
+    if (i > 0 && i < rx_idx) {
+        memmove(rx_buf, &rx_buf[i], rx_idx - i);
+        rx_idx -= i;
+    } else if (i >= rx_idx) {
+        rx_idx = 0;
+    }
+}
+

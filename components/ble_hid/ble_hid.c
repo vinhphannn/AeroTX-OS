@@ -15,24 +15,27 @@ void ble_store_config_init(void);
 static const char *TAG = "BLE_NIMBLE_HID";
 
 // --- HID REPORT DESCRIPTOR ---
-// 4 Axes, 8 Buttons (9 Bytes Payload + 1 Byte Report ID = 10 Bytes total)
+// 6 Axes (Unsigned 16-bit), 8 Buttons
 static const uint8_t hid_report_desc[] = {
-    0x05, 0x01,        //   Usage Page (Generic Desktop)
-    0x09, 0x05,        //   Usage (Gamepad)
-    0xA1, 0x01,        //   Collection (Application)
+    0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
+    0x09, 0x04,        // Usage (Joystick)
+    0xA1, 0x01,        // Collection (Application)
     
     0x85, 0x01,        //   Report ID (1)
     
-    0x05, 0x01,        //   Usage Page (Generic Desktop)
+    0x05, 0x01,        //   Usage Page (Generic Desktop Ctrls)
+    0x09, 0x01,        //   Usage (Pointer)
     0xA1, 0x00,        //   Collection (Physical)
-    0x09, 0x30,        //     Usage (X) -> Roll
-    0x09, 0x31,        //     Usage (Y) -> Pitch
-    0x09, 0x32,        //     Usage (Z) -> Yaw
-    0x09, 0x35,        //     Usage (Rz) -> Throttle
+    0x09, 0x30,        //     Usage (X)  -> Yaw
+    0x09, 0x31,        //     Usage (Y)  -> Throttle
+    0x09, 0x32,        //     Usage (Z)  -> Roll
+    0x09, 0x35,        //     Usage (Rz) -> Pitch
+    0x09, 0x33,        //     Usage (Rx) -> P1
+    0x09, 0x34,        //     Usage (Ry) -> P2
     0x15, 0x00,        //     Logical Minimum (0)
     0x27, 0xFF, 0xFF, 0x00, 0x00, // Logical Maximum (65535)
     0x75, 0x10,        //     Report Size (16 bits)
-    0x95, 0x04,        //     Report Count (4 axes)
+    0x95, 0x06,        //     Report Count (6 axes)
     0x81, 0x02,        //     Input (Data, Variable, Absolute)
     0xC0,              //   End Collection
     
@@ -50,12 +53,13 @@ static const uint8_t hid_report_desc[] = {
 };
 
 typedef struct {
-    uint8_t  report_id; // Match 0x85, 0x01
-    uint16_t roll;      // Usage 0x30 (X)
-    uint16_t pitch;     // Usage 0x31 (Y)
-    uint16_t yaw;       // Usage 0x32 (Z)
-    uint16_t throttle;  // Usage 0x35 (Rz)
-    uint8_t  buttons;   // 8 bits
+    uint16_t x;      // Yaw
+    uint16_t y;      // Throttle
+    uint16_t z;      // Roll
+    uint16_t rz;     // Pitch
+    uint16_t rx;     // P1
+    uint16_t ry;     // P2
+    uint8_t  buttons;
 } __attribute__((packed)) gamepad_report_t;
 
 static volatile bool   s_is_connected = false;
@@ -84,9 +88,9 @@ static const uint8_t hid_report_ref[] = {0x01, 0x01};
 
 // PnP ID: Vendor ID Source (2=USB), Vendor ID, Product ID, Product Version
 static const uint8_t pnp_id[] = {
-    0x02, // Vendor ID Source: 0x02 (USB Implementer's Forum)
-    0x5E, 0x04, // Vendor ID: 0x045E (Microsoft Corporation)
-    0x8E, 0x02, // Product ID: 0x028E (Xbox 360 Controller)
+    0x02,       // Vendor ID Source: 0x02 (USB)
+    0x09, 0x12, // Vendor ID: 0x1209 (Open Source VID)
+    0x01, 0x10, // Product ID: 0x1001 (Generic Flight Stick/Gamepad)
     0x10, 0x01  // Product Version: 0x0110 (1.1.0)
 };
 
@@ -217,7 +221,6 @@ static int gatt_svr_chr_access_hid(uint16_t conn_handle, uint16_t attr_handle,
     } else if (uuid == 0x2A4D) { // Report
         // Read logic (Host poll)
         gamepad_report_t r = {0};
-        r.report_id = 1;
         os_mbuf_append(ctxt->om, &r, sizeof(r));
         return 0;
     }
@@ -234,8 +237,8 @@ static void ble_hid_advertise(void) {
     
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     
-    // Appearance 0x03C4 (Gamepad) thay vì 0x03C3 (Joystick) theo chuẩn Microsoft!
-    fields.appearance = 0x03C4;
+    // Appearance 0x03C3 (Joystick)
+    fields.appearance = 0x03C3;
     fields.appearance_is_present = 1;
 
     fields.uuids16 = (ble_uuid16_t[]) {
@@ -251,8 +254,8 @@ static void ble_hid_advertise(void) {
     }
 
     memset(&rsp_fields, 0, sizeof rsp_fields);
-    rsp_fields.name = (uint8_t *)"ELRS TX01 Joystick";
-    rsp_fields.name_len = strlen("ELRS TX01 Joystick");
+    rsp_fields.name = (uint8_t *)"AeroTX FPV Gamepad";
+    rsp_fields.name_len = strlen("AeroTX FPV Gamepad");
     rsp_fields.name_is_complete = 1;
     rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
     if (rc != 0) {
@@ -330,7 +333,7 @@ static void ble_hid_on_sync(void) {
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
 
     // Set Default Tên Thiết Bị
-    ble_svc_gap_device_name_set("ELRS TX01 Gamepad");
+    ble_svc_gap_device_name_set("AeroTX FPV Gamepad");
     ble_svc_gap_device_appearance_set(0x03C4); // Gamepad
 
     ble_hid_advertise();
@@ -376,7 +379,7 @@ void ble_hid_init(void) {
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
     
     // PIN NIMBLE TO CORE 0: Tránh làm treo UI Task trên Core 1
-    xTaskCreatePinnedToCore(nimble_host_task, "ble_host", 4096, NULL, 15, NULL, 0);
+    xTaskCreatePinnedToCore(nimble_host_task, "ble_host", 4096, NULL, 17, NULL, 0);
     
     s_ble_initialized = true;
     ESP_LOGI(TAG, "BLE HID Initialized & NimBLE Core Booted");
@@ -399,28 +402,41 @@ bool ble_hid_is_connected(void) {
     return s_is_connected;
 }
 
-void ble_hid_send_report(uint16_t throttle, uint16_t yaw, uint16_t pitch, uint16_t roll, uint8_t buttons) {
+static uint16_t map_axis(uint16_t val, bool invert) {
+    if (val < 1000) val = 1000;
+    if (val > 2000) val = 2000;
+    if (invert) val = 3000 - val; // Đảo ngược 1000<->2000 mượt mà
+    return (uint16_t)(((uint32_t)(val - 1000) * 65535) / 1000);
+}
+
+void ble_hid_send_report(uint16_t throttle, uint16_t yaw, uint16_t pitch, uint16_t roll, uint16_t p1, uint16_t p2, uint8_t buttons) {
     if (!s_is_connected || !s_is_subscribed) return;
 
     uint32_t now = xTaskGetTickCount();
     if ((now - s_conn_time) < pdMS_TO_TICKS(1500)) return;
 
-    // Scale 1000-2000 to 0-65535 (16-bit unsigned)
-    uint16_t r = (roll > 1000)     ? (uint16_t)(((uint32_t)(roll - 1000) * 65535) / 1000) : 0;
-    uint16_t p = (pitch > 1000)    ? (uint16_t)(((uint32_t)(pitch - 1000) * 65535) / 1000) : 0;
-    uint16_t y = (yaw > 1000)      ? (uint16_t)(((uint32_t)(yaw - 1000) * 65535) / 1000) : 0;
-    uint16_t t = (throttle > 1000) ? (uint16_t)(((uint32_t)(throttle - 1000) * 65535) / 1000) : 0;
+    // Steam Gamepad mapping chuẩn:
+    // Left Stick: X (Yaw), Y (Throttle)
+    // Right Stick: Z (Roll), Rz (Pitch)
+    // Triggers / Slider: Rx (P1), Ry (P2)
+    uint16_t v_yaw   = map_axis(yaw, false);      // X
+    uint16_t v_thr   = map_axis(throttle, true);  // Y
+    uint16_t v_roll  = map_axis(roll, false);     // Z
+    uint16_t v_pitch = map_axis(pitch, true);     // Rz
+    uint16_t v_p1    = map_axis(p1, false);       // Rx
+    uint16_t v_p2    = map_axis(p2, false);       // Ry
 
     static uint32_t last_send_time = 0;
     if ((now - last_send_time) < pdMS_TO_TICKS(10)) return; // Optimized 100Hz Signal!
     last_send_time = now;
 
     gamepad_report_t report;
-    report.report_id = 1;
-    report.roll = r;     // X
-    report.pitch = p;    // Y
-    report.yaw = y;      // Z
-    report.throttle = t; // Rz
+    report.x  = v_yaw;
+    report.y  = v_thr;
+    report.z  = v_roll;
+    report.rz = v_pitch;
+    report.rx = v_p1;
+    report.ry = v_p2;
     report.buttons = buttons;
 
     struct os_mbuf *om = ble_hs_mbuf_from_flat(&report, sizeof(report));

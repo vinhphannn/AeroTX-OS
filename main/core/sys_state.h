@@ -31,11 +31,33 @@ typedef struct {
 // --- Cấu trúc Telemetry (Nhận từ máy bay) ---
 typedef struct {
     float    vbat_drone;
-    uint8_t  rssi;           // Downlink (máy bay thu)
-    uint8_t  link_quality;   // Uplink (TX nhận ACK)
-    float    alt;
+    float    current_drone;
+    uint8_t  batt_remaining;
+    
+    int8_t   rssi;           // Downlink RSSI (dBm)
+    int8_t   snr;            // Downlink SNR (dB)
+    uint8_t  link_quality;   // Downlink LQ (%)
+    
+    int32_t  gps_lat;        // Latitude (degree / 10^7)
+    int32_t  gps_lon;        // Longitude (degree / 10^7)
+    float    gps_alt;        // Altitude (m)
+    uint8_t  gps_sats;       // Satellites
+    
+    float    pitch;          // rad
+    float    roll;           // rad
+    float    yaw;            // rad
+    
+    char     flight_mode[16]; // Tên Flight Mode (VD: "STABILIZE")
+    
     bool     link_active;
+    uint32_t last_recv_ms;
 } TelemetryData_t;
+
+// --- Cấu trúc Debug Latency ---
+typedef struct {
+    uint32_t frame_id;
+    uint32_t ts_sampled; 
+} LatencyTrace_t;
 
 // --- Trạng thái toàn cục (Live State) ---
 typedef struct {
@@ -55,6 +77,9 @@ typedef struct {
 
     // System Flags
     uint8_t  sys_mode;  // 0: Flight, 1: Menu, 2: Sim
+    
+    // Debug Latency
+    LatencyTrace_t trace;
 } SystemState_t;
 
 // --- IPC Handles ---

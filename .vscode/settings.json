@@ -4,8 +4,8 @@
     "interface/ftdi/esp32_devkitj_v1.cfg",
     "target/esp32.cfg"
   ],
-  "idf.portWin": "COM5",
-  "idf.currentSetup": "/home/zynh/esp/v5.1.6/esp-idf",
+  "idf.portWin": "COM4",
+  "idf.currentSetup": "f:\\Users\\Zynh\\esp\\v5.1.6\\esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32"
   },

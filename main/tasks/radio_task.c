@@ -1,14 +1,17 @@
 /**
  * radio_task.c - TX01 Radio Control Task (ELRS / CRSF Version)
  * ==========================================================
- * Chuyển đổi từ nRF24 sang ExpressLRS (CRSF Protocol).
+ * ExpressLRS (CRSF Protocol).
  * Tốc độ baud: 420,000 bps.
  * Chu kỳ gửi: 4ms (250Hz) cố định.
  */
 
 #include "core/sys_state.h"
+#include "core/sys_config.h"
 #include "core/crsf.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "ble_hid.h"
 #include <string.h>
 
 static const char *TAG = "RADIO_TASK_ELRS";
@@ -30,9 +33,18 @@ void radio_task(void *pvParameters)
     TickType_t last_wake = xTaskGetTickCount();
 
     while (1) {
+        static TelemetryData_t local_telem = {0};
+        
+        // Đọc Snapshot từ g_state trước
         SystemState_t snap;
         if (xSemaphoreTake(sys_mutex, pdMS_TO_TICKS(2)) == pdTRUE) {
             snap = g_state;
+            
+            // Đẩy Telemetry mới nhận được vào biến toàn cục (chỉ nếu đang bay)
+            if (snap.sys_mode != 2) {
+                g_state.telemetry = local_telem;
+            }
+            
             xSemaphoreGive(sys_mutex);
             
             // Cập nhật bản sao hợp lệ
@@ -44,20 +56,58 @@ void radio_task(void *pvParameters)
             snap = last_valid;
         }
 
-        // Luôn bật nguồn nếu không ở chế độ Sim
-        if (snap.sys_mode != 2) {
-            crsf_set_power(true);
+        static uint8_t last_sys_mode = 0;
+        
+        // Quản lý chuyển đổi chế độ hệ thống (Flight <-> Sim)
+        if (snap.sys_mode != last_sys_mode) {
+            if (snap.sys_mode == 2) {
+                ESP_LOGI(TAG, "Entering Simulator Mode. Turning OFF CRSF, Starting BLE.");
+                crsf_set_power(false);
+                ble_hid_init();
+            } else {
+                if (last_sys_mode == 2) {
+                    ESP_LOGI(TAG, "Exiting Simulator Mode. Turning ON CRSF, Stopping BLE.");
+                    ble_hid_deinit();
+                }
+                crsf_set_power(true);
+            }
+            last_sys_mode = snap.sys_mode;
         }
 
-        // B2: Quản lý trạng thái hệ thống
+        // B3: Chế độ SIMULATOR
         if (snap.sys_mode == 2) {
-            // Chế độ Sim: tắt radio hoàn toàn
-            crsf_set_power(false);
-            vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(4));
+            // Đóng gói nút bấm
+            uint8_t buttons = 0;
+            if (snap.channels[4] > 1500) buttons |= (1 << 0); // ARM
+            if (snap.channels[5] > 1500) buttons |= (1 << 1); // Beeper
+            if (snap.channels[6] > 1500) buttons |= (1 << 2); // LED
+            if (snap.channels[7] > 1500) buttons |= (1 << 3); // AUX
+            
+            // Bắn dữ liệu Joystick sang Bluetooth
+            ble_hid_send_report(
+                snap.channels[0], // Throttle
+                snap.channels[1], // Yaw
+                snap.channels[2], // Pitch
+                snap.channels[3], // Roll
+                snap.channels[10], // P1
+                snap.channels[11], // P2
+                buttons
+            );
+            
+            // Tạm dừng 10ms (100Hz là quá đủ mượt cho Simulator)
+            vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
             continue;
         }
 
-        // B3: Đóng gói và gửi CRSF RC Channels
+        // B1: Chế độ bay thực tế (FLIGHT/MENU) -> Đọc và xử lý CRSF
+        crsf_receive_telemetry(&local_telem);
+        
+        // Timeout Telemetry (1 giây không có gói tin = mất sóng)
+        if ((esp_timer_get_time() / 1000) - local_telem.last_recv_ms > 1000) {
+            local_telem.link_active = false;
+        }
+
+        // B4: Đóng gói và gửi CRSF RC Channels
         // ─────────────────────────────────────────────────────────
         // Layout cố định (KHÔNG thay đổi thứ tự mà không cập nhật QGC):
         //   Ch1-4  : Throttle / Yaw / Pitch / Roll  (joystick)
@@ -97,16 +147,24 @@ void radio_task(void *pvParameters)
         crsf_send_channels(crsf_channels);
 
 
-        // B4: Log định kỳ (2 giây/lần)
+        // B5: Log định kỳ (2 giây/lần)
         static uint32_t last_log = 0;
         uint32_t now = xTaskGetTickCount();
         if (now - last_log > pdMS_TO_TICKS(2000)) {
+#if LOG_LATENCY_DEBUG
+            uint32_t send_ts = (uint32_t)esp_timer_get_time();
+            uint32_t lag = send_ts - snap.trace.ts_sampled;
+            ESP_LOGI("LATENCY_DEBUG", "[Radio] Frame %lu | Sensor -> CRSF TX: %lu us (%.2f ms)", 
+                     snap.trace.frame_id, lag, lag / 1000.0f);
+#endif
+#if LOG_CRSF_PERIODIC
             ESP_LOGI(TAG, "[CRSF] Sending 250Hz | Thr: %d | Armed: %d", 
                      snap.channels[0], (snap.channels[5] > 1500));
+#endif
             last_log = now;
         }
 
-        // B5: Ngủ bù thời gian - Đảm bảo 250Hz
+        // B6: Ngủ bù thời gian - Đảm bảo 250Hz
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(4));
     }
 }

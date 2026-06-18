@@ -12,7 +12,7 @@ static lv_obj_t *btn_back;
 static menu_page_t* pages[] = {&page_inputs, &page_rf_link, &page_fc_tune, &page_calibration, &page_system};
 static const char* page_descs[] = {
     "Exponential, Trims & Inversion",
-    "NRF24 Frequency & Protocol",
+    "CRSF Frequency & Protocol",
     "Adjust PIDs & Flight Filters",
     "Set sticks Min, Max & Neutral",
     "Device Info & LCD Settings"

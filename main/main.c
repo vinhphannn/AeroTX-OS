@@ -66,7 +66,7 @@ void app_main(void) {
      *
      * CPU0 (PRO_CPU):
      *   ├ sensor_task  PRIO=15  250Hz  - đọc ADC/MUX, tính mixer
-     *   └ radio_task   PRIO=12  250Hz  - TX NRF24, chạy sau sensor (lower prio)
+     *   └ radio_task   PRIO=12  250Hz  - TX CRSF, chạy sau sensor (lower prio)
      *   IDLE0 là luôn được chạy khi cả hai task đang sleep/wait
      *
      * CPU1 (Độc quyền UI):

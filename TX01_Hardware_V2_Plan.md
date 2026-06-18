@@ -20,8 +20,7 @@ Tài liệu này mô tả chi tiết cách thiết kế lại sơ đồ đi dây
 | | LED (Backlight) | **3.3V*** | **Cắm qua trở 10-22Ω + Tụ lọc** |
 | **Màn cảm ứng**| T_CS | **32** | Dùng chung SCK/MOSI/MISO với TFT |
 | | T_IRQ | None | Bỏ qua (Tránh rủi ro/tiết kiệm chân) |
-| **NRF24L01** | SCK / MOSI / MISO | 14 / 13 / **25** | **Bus HSPI độc lập** (Né hoàn toàn chân 12) |
-| | CE / CSN | 16 / 21 | Ưu tiên cao cho phát sóng |
+| **CRSF** | TX / RX | 16 / 17 | (Tuỳ chọn UART) |
 | **MUX 4067** | SIG (Analog Out) | 34 | Chân ADC (Sạch nhiễu, Input Only) |
 | | S0 / S1 / S2 / **S3** | 17 / 22 / 33 / **26**| **Né hoàn toàn GPIO15 (Strap pin)** |
 
@@ -74,17 +73,8 @@ Chúng ta sử dụng 12/16 kênh của module Mux:
 - **Task Affinity**: Khóa task điều khiển vào Core 0: `vTaskCoreAffinitySet(NULL, (1 << 0))`.
 - **Loop Timing**: Sử dụng `micros()` để kiểm soát chu kỳ chính xác 4000µs.
 
-### 5. NRF24 - Non-blocking Write (Quan trọng)
-- **Gửi không chờ**: Tránh làm treo bus SPI khi mất kết nối.
-    ```cpp
-    if (!radio.writeFast(&txData, sizeof(txData))) {
-        radio.flush_tx(); 
-    }
-    ```
-- **Config**: `RF24_250KBPS`, `setAutoAck(false)` (nếu cần tốc độ tối đa).
-
-### 6. Nối đất & Nguồn (Star Ground)
-- **Star Ground**: Đi riêng đường GND cho NRF và GND sạch cho cụm Analog về điểm chung tại nguồn.
+### 5. Nối đất & Nguồn (Star Ground)
+- **Star Ground**: Đi riêng đường GND cho RF và GND sạch cho cụm Analog về điểm chung tại nguồn.
 - **Backlight Filter**: LED màn hình cắm qua **1-2 Diode** nối tiếp + Tụ **10µF+100µF** để tránh sụt áp tức thời.
 
 ---

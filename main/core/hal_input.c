@@ -86,14 +86,14 @@ static uint16_t read_mux_avg(uint8_t mux_ch, uint32_t settle_us)
 
 // FIX NOISE: IIR Low-Pass Filter (Exponential Moving Average)
 // alpha nhỏ = lọc mạnh (lag nhiều), alpha lớn = lọc ít (phản hồi nhanh)
-// alpha=0.25: thời hằng ~3 chu kỳ (3×4ms = 12ms) - cân bằng tốt
-#define IIR_ALPHA_SCALED  64   // alpha = 0.25
+// alpha=0.75: thời hằng siêu ngắn (lag gần như bằng 0)
+#define IIR_ALPHA_SCALED  192  // alpha = 0.75
 static uint16_t s_joy_filtered[7] = {2048, 2048, 2048, 2048, 2048, 2048, 2048}; // [0-3]joy, [4-5]pot, [6]vbat
 
 // index: 0-5 joy/pot (alpha=0.25), 6 vbat (alpha=0.01 cực chậm)
 static uint16_t apply_iir(uint8_t idx, uint16_t new_val)
 {
-    uint32_t alpha = (idx == 6) ? 3 : 64; // Pin: alpha ~ 0.01 (3/256), Joy: 0.25 (64/256)
+    uint32_t alpha = (idx == 6) ? 3 : IIR_ALPHA_SCALED; // Pin: siêu chậm, Joy: siêu nhanh
     uint32_t filtered = (alpha * new_val + (256 - alpha) * s_joy_filtered[idx]) / 256;
     s_joy_filtered[idx] = (uint16_t)filtered;
     return s_joy_filtered[idx];

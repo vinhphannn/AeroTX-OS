@@ -93,7 +93,7 @@ void lv_port_disp_init(void) {
 
     esp_lcd_panel_io_spi_config_t io_config = {
         .dc_gpio_num = PIN_LCD_DC, .cs_gpio_num = PIN_LCD_CS,
-        .pclk_hz = 20 * 1000 * 1000, // Tăng lên 20MHz cho mượt mà
+        .pclk_hz = 40 * 1000 * 1000, // Tăng lên 40MHz cho mượt mà (chống trễ UI)
         .lcd_cmd_bits = 8, .lcd_param_bits = 8,
         .spi_mode = 0, .trans_queue_depth = 10, .on_color_trans_done = notify_lvgl_flush_ready,
         .user_ctx = NULL,
