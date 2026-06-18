@@ -433,11 +433,20 @@ bool ble_hid_is_connected(void) {
     return s_is_connected;
 }
 
-static uint16_t map_axis(uint16_t val, bool invert) {
+// map_axis: 2 tầng bảo vệ
+// Tầng 1: Clamp + Invert + Scale 1000-2000 -> 0-65535
+// Tầng 2: Output Deadband 150 LSB (= ~2.3 ADC units): chặn nhiễu bị khuếch đại x65 chưa lọc hết
+static uint16_t map_axis(uint16_t val, bool invert, uint8_t axis_idx) {
+    static uint16_t s_out[6] = {32767, 32767, 32767, 32767, 32767, 32767};
     if (val < 1000) val = 1000;
     if (val > 2000) val = 2000;
-    if (invert) val = 3000 - val; // Đảo ngược 1000<->2000 mượt mà
-    return (uint16_t)(((uint32_t)(val - 1000) * 65535) / 1000);
+    if (invert) val = 3000 - val;
+    uint16_t new_out = (uint16_t)(((uint32_t)(val - 1000) * 65535) / 1000);
+    int32_t diff = (int32_t)new_out - (int32_t)s_out[axis_idx];
+    if (diff < 0) diff = -diff;
+    if (diff < 150) return s_out[axis_idx]; // Output Deadband giữ nguyên nếu thay đổi quá nhỏ
+    s_out[axis_idx] = new_out;
+    return new_out;
 }
 
 void ble_hid_send_report(uint16_t throttle, uint16_t yaw, uint16_t pitch, uint16_t roll, uint16_t p1, uint16_t p2, uint16_t buttons) {
@@ -450,12 +459,12 @@ void ble_hid_send_report(uint16_t throttle, uint16_t yaw, uint16_t pitch, uint16
     // Left Stick: X (Yaw), Y (Throttle)
     // Right Stick: Z (Roll), Rz (Pitch)
     // Triggers / Slider: Rx (P1), Ry (P2)
-    uint16_t v_yaw   = map_axis(yaw, false);      // X
-    uint16_t v_thr   = map_axis(throttle, true);  // Y
-    uint16_t v_roll  = map_axis(roll, false);     // Z
-    uint16_t v_pitch = map_axis(pitch, true);     // Rz
-    uint16_t v_p1    = map_axis(p1, false);       // Rx
-    uint16_t v_p2    = map_axis(p2, false);       // Ry
+    uint16_t v_yaw   = map_axis(yaw,      false, 0);  // X
+    uint16_t v_thr   = map_axis(throttle, true,  1);  // Y
+    uint16_t v_roll  = map_axis(roll,     false, 2);  // Z
+    uint16_t v_pitch = map_axis(pitch,    true,  3);  // Rx
+    uint16_t v_p1    = map_axis(p1,       false, 4);  // Ry
+    uint16_t v_p2    = map_axis(p2,       false, 5);  // Rz
 
     static uint32_t last_send_time = 0;
     if ((now - last_send_time) < pdMS_TO_TICKS(10)) return; // Optimized 100Hz Signal!

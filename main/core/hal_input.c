@@ -123,9 +123,9 @@ static uint16_t apply_iir(uint8_t idx, uint16_t new_val)
     int16_t diff = (int16_t)new_val - (int16_t)old_val;
     uint16_t abs_diff = abs(diff);
     
-    // 1. Deadband (Triệt tiêu rung kim): Sau khi qua Alpha-Trimmed, nhiễu đã giảm cực mạnh.
-    // Nếu dao động <= 8 đơn vị ADC, khóa chặt giá trị (Deadband).
-    if (abs_diff <= 8) {
+    // 1. Deadband: ESP32 ADC1 có nền nhiễu thực tế khoảng 10-12 LSB sau bộ lọc.
+    // Khóa chặt nếu dao động <= 12 để triệt tiêu toàn bộ nhiễu tĩnh còn sót lại.
+    if (abs_diff <= 12) {
         return old_val;
     }
     
