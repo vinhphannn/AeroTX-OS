@@ -198,19 +198,55 @@ static void mixer_process_frame(const RawInput_t *raw,
 // -----------------------------------------------------------------------
 // CHANNEL STABILIZER - Tầng lọc chung sau Mixer
 // Chỉ áp dụng cho 4 trục joy (idx 0-3). Công tắc (idx 4+) là số nguyên nên không cần.
-// Deadband ±2 PWM: Khi thay đổi nhỏ hơn 2µs, giữ nguyên giá trị cũ.
-// Kết quả: channels[0..3] trong g_state LUỜN sạch - BLE/CRSF/Display dùng trung với bộ lọc riêng.
+// Bổ sung: Median Filter (5 mẫu) để triệt tiêu hoàn toàn "RF Burst Noise" (nhiễu
+// do module TX phát sóng công suất cao làm sụt áp 3.3V từng chớp).
+// Sau khi Median sẽ qua Deadband ±2 PWM.
+// Kết quả: channels[0..3] trong g_state LUỜN sạch - BLE/CRSF/Display dùng chung.
 // -----------------------------------------------------------------------
 #define CH_STAB_DEADBAND  2
 static uint16_t s_ch_stable[4] = {1000, 1500, 1500, 1500};
+static uint16_t s_median_buf[4][5];
+static uint8_t s_median_idx[4] = {0};
+static bool s_stab_first_run = true;
+
+static uint16_t get_median_5(uint16_t arr[5]) {
+    uint16_t temp[5];
+    memcpy(temp, arr, sizeof(temp));
+    // Bubble sort 5 phần tử
+    for (int i = 0; i < 4; i++) {
+        for (int j = i + 1; j < 5; j++) {
+            if (temp[i] > temp[j]) {
+                uint16_t t = temp[i]; temp[i] = temp[j]; temp[j] = t;
+            }
+        }
+    }
+    return temp[2]; // Trả về phần tử ở giữa
+}
 
 static void channel_stabilize(SystemState_t *state)
 {
+    if (s_stab_first_run) {
+        for (int i = 0; i < 4; i++) {
+            s_ch_stable[i] = state->channels[i];
+            for (int j = 0; j < 5; j++) s_median_buf[i][j] = state->channels[i];
+        }
+        s_stab_first_run = false;
+        return;
+    }
+
     for (int i = 0; i < 4; i++) {
-        int diff = (int)state->channels[i] - (int)s_ch_stable[i];
+        // 1. Thêm mẫu mới vào buffer
+        s_median_buf[i][s_median_idx[i]] = state->channels[i];
+        s_median_idx[i] = (s_median_idx[i] + 1) % 5;
+
+        // 2. Lấy giá trị Median để loại bỏ RF burst (giá trị nhảy vọt đột ngột)
+        uint16_t med_val = get_median_5(s_median_buf[i]);
+
+        // 3. Áp dụng Deadband ±2 PWM lên giá trị Median
+        int diff = (int)med_val - (int)s_ch_stable[i];
         if (diff < 0) diff = -diff;
         if (diff > CH_STAB_DEADBAND) {
-            s_ch_stable[i] = state->channels[i];
+            s_ch_stable[i] = med_val;
         }
         state->channels[i] = s_ch_stable[i];
     }

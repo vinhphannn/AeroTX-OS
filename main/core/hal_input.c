@@ -107,10 +107,17 @@ static uint16_t read_mux_alpha_trimmed(uint8_t mux_ch, uint32_t settle_us)
 // - Di chuyển chậm: Lọc cực mạnh để mượt mà (chống stair-stepping)
 // - Di chuyển nhanh (Flick tay): Bỏ qua bộ lọc (Alpha = 100%), phản hồi 0ms
 static uint16_t s_joy_filtered[7] = {2048, 2048, 2048, 2048, 2048, 2048, 2048}; // [0-3]joy, [4-5]pot, [6]vbat
+static bool s_first_run[7] = {true, true, true, true, true, true, true};
 
 // index: 0-5 joy/pot, 6 vbat
 static uint16_t apply_iir(uint8_t idx, uint16_t new_val)
 {
+    if (s_first_run[idx]) {
+        s_joy_filtered[idx] = new_val;
+        s_first_run[idx] = false;
+        return new_val;
+    }
+
     if (idx == 6) {
         // Pin (VBAT) thay đổi cực chậm -> Lọc siêu chậm (Alpha = 3/256)
         uint32_t alpha = 3;
