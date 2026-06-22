@@ -3,12 +3,14 @@
  * ==========================================
  * Task này chạy ở 250Hz trên Core 0.
  *
- * Pipeline rõ ràng 3 bước:
+ * Pipeline rõ ràng 4 bước:
  *   [1] HAL_Input_Read()        -> đọc phần cứng, lấy RawInput_t
  *   [2] mixer_process_frame()   -> Calib + Expo + Trim = channels[]
- *   [3] sys_mutex update        -> ghi kết quả vào g_state
+ *   [3] channel_stabilize()     -> Deadband chung cho 4 trục joy (1 lần duy nhất)
+ *   [4] sys_mutex update        -> ghi kết quả vào g_state
  *
  * sensor_task KHÔNG gửi Queue nữa. radio_task tự đọc g_state qua mutex.
+ * Mọi consumer (CRSF, BLE, Display) đọc channels[] đã được ổn định từ đây.
  */
 
 #include "core/sys_state.h"
@@ -194,6 +196,27 @@ static void mixer_process_frame(const RawInput_t *raw,
 }
 
 // -----------------------------------------------------------------------
+// CHANNEL STABILIZER - Tầng lọc chung sau Mixer
+// Chỉ áp dụng cho 4 trục joy (idx 0-3). Công tắc (idx 4+) là số nguyên nên không cần.
+// Deadband ±2 PWM: Khi thay đổi nhỏ hơn 2µs, giữ nguyên giá trị cũ.
+// Kết quả: channels[0..3] trong g_state LUỜN sạch - BLE/CRSF/Display dùng trung với bộ lọc riêng.
+// -----------------------------------------------------------------------
+#define CH_STAB_DEADBAND  2
+static uint16_t s_ch_stable[4] = {1000, 1500, 1500, 1500};
+
+static void channel_stabilize(SystemState_t *state)
+{
+    for (int i = 0; i < 4; i++) {
+        int diff = (int)state->channels[i] - (int)s_ch_stable[i];
+        if (diff < 0) diff = -diff;
+        if (diff > CH_STAB_DEADBAND) {
+            s_ch_stable[i] = state->channels[i];
+        }
+        state->channels[i] = s_ch_stable[i];
+    }
+}
+
+// -----------------------------------------------------------------------
 // TASK ENTRY POINT
 // -----------------------------------------------------------------------
 void sensor_task(void *pvParameters)
@@ -234,6 +257,10 @@ void sensor_task(void *pvParameters)
 
             // 2. Tính toán mixer trên bản snapshot (không chiếm mutex)
             mixer_process_frame(&raw, &snap.active_model, &snap.calib, &snap);
+
+            // 2.5 Channel Stabilizer: Deadband ±2 µs cho ch[0..3] - một lần duy nhất,
+            // tất cả consumer (CRSF, BLE, Display) đớu đọc giá trị đã ổn định này.
+            channel_stabilize(&snap);
 
             // 3. Cập nhật kết quả vào g_state (chiếm mutex cực ngắn)
             if (xSemaphoreTake(sys_mutex, pdMS_TO_TICKS(1)) == pdTRUE) {

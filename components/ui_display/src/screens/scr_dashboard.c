@@ -4,18 +4,6 @@
 
 static lv_obj_t *obj_main_cont;
 static lv_obj_t *bar_thr, *bar_yaw, *bar_pitch, *bar_roll;
-
-// Display Deadband: Ch\u1ec9 c\u1eadp nh\u1eadt s\u1ed1 hi\u1ec3n th\u1ecb khi thay \u0111\u1ed5i > 2 PWM \u0111\u01a1n v\u1ecb.
-// Lo\u1ea1i b\u1ecf nhi\u1ec5u th\u1ecb gi\u00e1c, gi\u00e3 th\u1ea5y s\u1ed1 nh\u1ea3y khi tay c\u1ea7m \u0111\u1ee9ng y\u00ean.
-#define DISP_DEADBAND 2
-static uint16_t s_disp_thr = 0, s_disp_yaw = 0, s_disp_pit = 0, s_disp_rol = 0;
-
-static inline uint16_t deadband_val(uint16_t new, uint16_t *stored) {
-    if (abs((int)new - (int)*stored) > DISP_DEADBAND) {
-        *stored = new;
-    }
-    return *stored;
-}
 static lv_obj_t *lab_thr_val, *lab_yaw_val, *lab_pit_val, *lab_rol_val;
 static lv_obj_t *label_status, *label_vbat_tx, *label_vbat_rx, *label_rssi;
 static lv_obj_t *leds_top[4];
@@ -214,22 +202,18 @@ void scr_dashboard_update(UIData_t *data) {
     lv_color_t sys_cols[] = {lv_color_hex(0x00FF00), lv_color_hex(0xAAAA00), lv_color_hex(0xFF0000)};
     lv_obj_set_style_bg_color(leds_bot[1], sys_cols[data->sys_state % 3], 0);
 
-    uint16_t d_thr = deadband_val(data->throttle, &s_disp_thr);
-    uint16_t d_yaw = deadband_val(data->yaw,      &s_disp_yaw);
-    uint16_t d_pit = deadband_val(data->pitch,    &s_disp_pit);
-    uint16_t d_rol = deadband_val(data->roll,     &s_disp_rol);
+    // channels[] da duoc channel_stabilize() loc trong sensor_task - dung truc tiep.
+    lv_bar_set_value(bar_thr, data->throttle, LV_ANIM_OFF);
+    lv_label_set_text_fmt(lab_thr_val, "%u", data->throttle);
 
-    lv_bar_set_value(bar_thr, d_thr, LV_ANIM_OFF);
-    lv_label_set_text_fmt(lab_thr_val, "%u", d_thr);
+    lv_bar_set_value(bar_yaw, data->yaw, LV_ANIM_OFF);
+    lv_label_set_text_fmt(lab_yaw_val, "%u", data->yaw);
 
-    lv_bar_set_value(bar_yaw, d_yaw, LV_ANIM_OFF);
-    lv_label_set_text_fmt(lab_yaw_val, "%u", d_yaw);
+    lv_bar_set_value(bar_pitch, data->pitch, LV_ANIM_OFF);
+    lv_label_set_text_fmt(lab_pit_val, "%u", data->pitch);
 
-    lv_bar_set_value(bar_pitch, d_pit, LV_ANIM_OFF);
-    lv_label_set_text_fmt(lab_pit_val, "%u", d_pit);
-
-    lv_bar_set_value(bar_roll, d_rol, LV_ANIM_OFF);
-    lv_label_set_text_fmt(lab_rol_val, "%u", d_rol);
+    lv_bar_set_value(bar_roll, data->roll, LV_ANIM_OFF);
+    lv_label_set_text_fmt(lab_rol_val, "%u", data->roll);
 
     // FIX: Không dùng %.1f để tránh lỗi in chuỗi dài (Format issues)
     int v_int = (int)data->vbat_tx;
