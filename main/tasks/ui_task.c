@@ -24,7 +24,7 @@ static const char *TAG = "UI_TASK";
 
 // Ngưỡng thay đổi tối thiểu để trigger render (tránh LVGL render thừa)
 #define CHAN_UPDATE_THRESHOLD  3     // µs
-#define VBAT_UPDATE_THRESHOLD  0.1f  // Volt (Tăng lên để lọc nhiễu nhẹ)
+#define VBAT_UPDATE_THRESHOLD  0.05f  // Volt (Giảm xuống để cập nhật mượt hơn)
 
 void ui_task(void *pvParameters)
 {
@@ -40,6 +40,7 @@ void ui_task(void *pvParameters)
     bool     last_armed       = false;
     float    last_vbat_drone  = 0.0f;
     float    last_vbat_tx     = 0.0f;
+    uint8_t  last_vbat_tx_pct = 0;
     uint32_t last_telem_ms    = 0;
     bool     last_ble_conn    = false;
     int8_t   last_rssi        = 0;    // Theo dõi RSSI để trigger render khi thay đổi
@@ -128,9 +129,11 @@ void ui_task(void *pvParameters)
                 need_render     = true;
             }
             if (local_state.tx_vbat - last_vbat_tx > VBAT_UPDATE_THRESHOLD ||
-                last_vbat_tx - local_state.tx_vbat > VBAT_UPDATE_THRESHOLD) {
-                last_vbat_tx = local_state.tx_vbat;
-                need_render  = true;
+                last_vbat_tx - local_state.tx_vbat > VBAT_UPDATE_THRESHOLD ||
+                local_state.tx_vbat_pct != last_vbat_tx_pct) {
+                last_vbat_tx     = local_state.tx_vbat;
+                last_vbat_tx_pct = local_state.tx_vbat_pct;
+                need_render      = true;
             }
             if (local_state.telemetry.last_recv_ms != last_telem_ms) {
                 last_telem_ms = local_state.telemetry.last_recv_ms;
