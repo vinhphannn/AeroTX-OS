@@ -69,6 +69,19 @@ static void flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *colo
     esp_lcd_panel_draw_bitmap(panel_handle, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_map);
 }
 
+static void wait_cb(lv_disp_drv_t *drv) {
+    // Nhường CPU cho IDLE task trên Core 1 trong khi chờ SPI DMA hoàn tất
+    vTaskDelay(1);
+
+    // Timeout Recovery: Nếu kẹt quá 300ms trong lúc chờ (mất ngắt SPI), ép giải phóng
+    if (last_flush_start != 0 && (esp_timer_get_time() - last_flush_start > 300000)) {
+        ESP_LOGE(TAG, "SPI DMA Timeout! Forcing LVGL flush_ready to recover UI.");
+        xSemaphoreGive(vspi_bus_free);
+        lv_disp_flush_ready(drv);
+        last_flush_start = esp_timer_get_time(); // Reset timeout
+    }
+}
+
 void lv_port_disp_set_backlight(uint8_t percent) {
     if (PIN_LCD_BLK == -1) return;
     if (percent > 100) percent = 100;
@@ -127,6 +140,7 @@ void lv_port_disp_init(void) {
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res = LCD_H_RES; disp_drv.ver_res = LCD_V_RES;
     disp_drv.flush_cb = flush_cb; disp_drv.draw_buf = &disp_buf;
+    disp_drv.wait_cb = wait_cb;
     disp_drv.user_data = panel_handle;
     lv_disp_drv_register(&disp_drv);
 }
