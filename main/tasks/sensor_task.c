@@ -185,7 +185,6 @@ void sensor_task(void *pvParameters)
     int id_cycle = TIMING_REGISTER("sensor_cyc",4000); // Budget: 4ms (toàn chu kỳ)
 
     RawInput_t raw = {0};
-    TickType_t last_wake = xTaskGetTickCount();
     uint32_t   frame = 0;
     uint32_t   sensor_miss_count = 0;
 
@@ -255,18 +254,11 @@ void sensor_task(void *pvParameters)
 #endif
         }
 
-        // Chạy đúng 250Hz, vTaskDelayUntil bù thời gian đọc ADC.
-        // NẾU chu kỳ đã bị trễ quá 3.5ms (do ADC treo), vTaskDelay(1) cưỡng bức 
-        // để nhường CPU cho IDLE task trên Core 0, tránh TWDT Reset.
-        if (hal_elapsed > 3500) {
-            static uint32_t last_warn = 0;
-            if (frame - last_warn > 250) { // Giới hạn log 1s/lần
-                ESP_LOGW(TAG, "TWDT Safety: HAL took %lluus, forcing yield.", hal_elapsed);
-                last_warn = frame;
-            }
-            vTaskDelay(1);
-        }
-
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(4));
+        // Thay vì vTaskDelayUntil (cố gắng bù trừ thời gian) có thể gây treo Watchdog
+        // nếu phần cứng tốn quá nhiều thời gian (không thèm sleep để đuổi kịp deadline),
+        // ta dùng vTaskDelay cố định 2ms (2 ticks).
+        // Tổng thời gian = HAL (~4.5ms) + Sleep (2ms) = 6.5ms => Tần số ~150Hz.
+        // Điều này đảm bảo LUÔN LUÔN nhường CPU cho IDLE task chống treo TWDT.
+        vTaskDelay(pdMS_TO_TICKS(2));
     }
 }
