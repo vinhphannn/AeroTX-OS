@@ -16,6 +16,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "hal_input.h"
 
 /**
  * FilteredInput_t - Dữ liệu đã lọc sạch, sẵn sàng cho mọi consumer.
