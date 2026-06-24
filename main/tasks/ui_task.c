@@ -42,6 +42,9 @@ void ui_task(void *pvParameters)
     float    last_vbat_tx     = 0.0f;
     uint32_t last_telem_ms    = 0;
     bool     last_ble_conn    = false;
+    int8_t   last_rssi        = 0;    // Theo dõi RSSI để trigger render khi thay đổi
+    char     last_flight_mode[16] = {0}; // Theo dõi flight_mode string
+    uint32_t last_force_render_ms = 0;   // Force render định kỳ khi mất kết nối
 
     // Diagnostic: đếm số frame bị skip do mutex bận
     uint32_t ui_miss_count    = 0;
@@ -134,6 +137,30 @@ void ui_task(void *pvParameters)
             if (local_state.telemetry.last_recv_ms != last_telem_ms) {
                 last_telem_ms = local_state.telemetry.last_recv_ms;
                 need_render = true;
+            }
+            // FIX: Trigger render khi RSSI thay đổi (không phụ thuộc vào last_recv_ms)
+            if (local_state.telemetry.rssi != last_rssi) {
+                last_rssi = local_state.telemetry.rssi;
+                need_render = true;
+            }
+            // FIX: Trigger render khi flight_mode string thay đổi
+            // Đây là lý do chính mode bay cập nhật chậm ~5s trên màn hình
+            if (strncmp(local_state.telemetry.flight_mode, last_flight_mode,
+                        sizeof(last_flight_mode)) != 0) {
+                strncpy(last_flight_mode, local_state.telemetry.flight_mode,
+                        sizeof(last_flight_mode) - 1);
+                last_flight_mode[sizeof(last_flight_mode) - 1] = '\0';
+                need_render = true;
+            }
+            // FIX RSSI freeze: khi mất kết nối, ELRS có thể giữ nguyên giá trị RSSI cũ
+            // → rssi != last_rssi không bao giờ trigger → UI không render "--"
+            // Giải pháp: Force render định kỳ mỗi 2 giây khi đang offline
+            if (!local_state.telemetry.link_active) {
+                uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                if (now_ms - last_force_render_ms > 2000) {
+                    last_force_render_ms = now_ms;
+                    need_render = true;
+                }
             }
             if (local_state.sys_mode == 2) {
                 bool current_ble = ble_hid_is_connected();

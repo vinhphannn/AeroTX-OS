@@ -153,30 +153,54 @@ void crsf_receive_telemetry(TelemetryData_t *telemetry) {
                 
                 uint8_t *payload = &rx_buf[i+3];
                 if (type == CRSF_FRAMETYPE_BATTERY_SENSOR) {
-                    telemetry->vbat_drone = ((payload[0] << 8) | payload[1]) / 10.0f;
-                    telemetry->current_drone = ((payload[2] << 8) | payload[3]) / 10.0f;
+                    // Battery: Byte 0-1 = Voltage (0.1V), 2-3 = Current (0.1A),
+                    //          4-6 = Fuel (mAh, 24-bit), 7 = Remaining (%)
+                    telemetry->vbat_drone    = (((uint16_t)payload[0] << 8) | payload[1]) / 10.0f;
+                    telemetry->current_drone = (((uint16_t)payload[2] << 8) | payload[3]) / 10.0f;
                     telemetry->batt_remaining = payload[7];
                 } else if (type == CRSF_FRAMETYPE_LINK_STATISTICS) {
-                    telemetry->rssi = -1 * payload[7]; // Downlink RSSI
-                    telemetry->link_quality = payload[8]; // Downlink LQ
-                    telemetry->snr = (int8_t)payload[9]; // Downlink SNR
+                    // Link Stats: Byte 7 = Downlink RSSI, 8 = Downlink LQ, 9 = Downlink SNR
+                    telemetry->rssi          = -1 * (int8_t)payload[7];
+                    telemetry->link_quality  = payload[8];
+                    telemetry->snr           = (int8_t)payload[9];
                 } else if (type == CRSF_FRAMETYPE_GPS) {
-                    telemetry->gps_lat = (payload[0]<<24) | (payload[1]<<16) | (payload[2]<<8) | payload[3];
-                    telemetry->gps_lon = (payload[4]<<24) | (payload[5]<<16) | (payload[6]<<8) | payload[7];
-                    telemetry->gps_alt = (((payload[12]<<8) | payload[13]) - 1000);
+                    // GPS: 0-3=Lat, 4-7=Lon, 8-9=Speed(0.1km/h), 10-11=Heading(0.01deg),
+                    //      12-13=Alt(m+1000 offset), 14=Sats
+                    // MUST cast to (uint32_t) before shifting to avoid uint8_t overflow UB!
+                    telemetry->gps_lat  = (int32_t)(((uint32_t)payload[0]  << 24) |
+                                                    ((uint32_t)payload[1]  << 16) |
+                                                    ((uint32_t)payload[2]  <<  8) |
+                                                     (uint32_t)payload[3]);
+                    telemetry->gps_lon  = (int32_t)(((uint32_t)payload[4]  << 24) |
+                                                    ((uint32_t)payload[5]  << 16) |
+                                                    ((uint32_t)payload[6]  <<  8) |
+                                                     (uint32_t)payload[7]);
+                    // Validate altitude: PX4 gửi 0xFFF0 (~65520) khi không có GPS fix
+                    // Range hợp lệ: -500m → 20000m, encoded: 500 → 21000
+                    uint16_t raw_alt = (((uint16_t)payload[12] << 8) | payload[13]);
+                    if (raw_alt >= 500 && raw_alt <= 21000) {
+                        telemetry->gps_alt = (float)((int16_t)raw_alt - 1000);
+                    }
+                    // else: giữ nguyên giá trị cũ (0.0f từ khởi tạo) khi không có fix
                     telemetry->gps_sats = payload[14];
                 } else if (type == CRSF_FRAMETYPE_ATTITUDE) {
-                    int16_t pt = (payload[0]<<8) | payload[1];
-                    int16_t ro = (payload[2]<<8) | payload[3];
-                    int16_t ya = (payload[4]<<8) | payload[5];
+                    // Attitude: 0-1=Pitch, 2-3=Roll, 4-5=Yaw (unit: 1e-4 rad)
+                    // MUST cast to (uint16_t) before shifting to avoid uint8_t overflow UB!
+                    int16_t pt = (int16_t)(((uint16_t)payload[0] << 8) | payload[1]);
+                    int16_t ro = (int16_t)(((uint16_t)payload[2] << 8) | payload[3]);
+                    int16_t ya = (int16_t)(((uint16_t)payload[4] << 8) | payload[5]);
                     telemetry->pitch = pt / 10000.0f;
-                    telemetry->roll = ro / 10000.0f;
-                    telemetry->yaw = ya / 10000.0f;
+                    telemetry->roll  = ro / 10000.0f;
+                    telemetry->yaw   = ya / 10000.0f;
                 } else if (type == CRSF_FRAMETYPE_FLIGHT_MODE) {
-                    int slen = frame_len - 2; // Type + Payload
-                    if (slen > 15) slen = 15;
+                    // Flight Mode: ASCII string terminated by '\0'
+                    // frame_len = Type(1) + Payload + CRC(1), so payload_len = frame_len - 2
+                    int slen = frame_len - 2;
+                    if (slen > (int)(sizeof(telemetry->flight_mode) - 1)) {
+                        slen = sizeof(telemetry->flight_mode) - 1;
+                    }
                     memcpy(telemetry->flight_mode, payload, slen);
-                    telemetry->flight_mode[slen] = 0;
+                    telemetry->flight_mode[slen] = '\0';
                 }
                 
                 // Nhảy qua frame này

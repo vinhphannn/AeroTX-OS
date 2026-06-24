@@ -32,8 +32,11 @@ void radio_task(void *pvParameters)
 
     TickType_t last_wake = xTaskGetTickCount();
 
+    // QUAN TRỌNG: Khai báo ngoài vòng lặp để tránh static-inside-loop corruption
+    TelemetryData_t local_telem;
+    memset(&local_telem, 0, sizeof(local_telem));
+
     while (1) {
-        static TelemetryData_t local_telem = {0};
         
         // Đọc Snapshot từ g_state trước
         SystemState_t snap;
@@ -104,12 +107,19 @@ void radio_task(void *pvParameters)
             continue;
         }
 
-        // B1: Chế độ bay thực tế (FLIGHT/MENU) -> Đọc và xử lý CRSF
+        // B1: Đọc Telemetry từ UART TRƯỚC (luôn phải đọc trước khi push vào g_state)
         crsf_receive_telemetry(&local_telem);
-        
-        // Timeout Telemetry (1 giây không có gói tin = mất sóng)
-        if ((esp_timer_get_time() / 1000) - local_telem.last_recv_ms > 1000) {
-            local_telem.link_active = false;
+
+        // Timeout Telemetry: 2 điều kiện để phát hiện mất kết nối:
+        // (1) Quá 1 giây không có gói tin mới nào
+        // (2) ELRS báo LQ = 0 (RF link drop) - ELRS set LQ=0 khi mất sóng chính xác hơn timeout
+        bool lq_lost = (local_telem.link_quality == 0 && local_telem.link_active);
+        bool timed_out = ((esp_timer_get_time() / 1000) - local_telem.last_recv_ms > 1000);
+        if (timed_out || lq_lost) {
+            local_telem.link_active  = false;
+            local_telem.rssi         = 0;
+            local_telem.snr          = 0;
+            local_telem.link_quality = 0;
         }
 
         // B4: Đóng gói và gửi CRSF RC Channels

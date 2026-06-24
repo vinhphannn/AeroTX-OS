@@ -12,7 +12,7 @@ typedef struct {
     float    vbat_drone; // Drone Telemetry (Float for 12.6V)
     float    vbat_tx;    // TX Battery
     uint8_t  vbat_tx_pct;
-    uint8_t  rssi;
+    int8_t   rssi;   // Downlink RSSI (dBm) — số âm, PHẢI là int8_t
     bool     is_connected;
     uint16_t p1, p2;
     bool     pid_updated;

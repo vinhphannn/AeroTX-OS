@@ -182,13 +182,14 @@ void scr_dashboard_update(UIData_t *data) {
         lv_label_set_text(label_status, "STATION READY");
         lv_obj_set_style_text_color(label_status, lv_color_hex(0xAAAAAA), 0);
         lv_label_set_text(label_vbat_rx, "RX: --V");
-        lv_label_set_text(label_rssi, "RSSI: 0%");
+        // Hiển thị "--" khi offline, tránh người dùng nhầm tưởng còn kết nối
+        lv_label_set_text(label_rssi, "RSSI: --");
     } else {
         lv_label_set_text_fmt(label_status, "%s | M%d", data->armed ? "ARMED" : "IDLE", data->mode);
         lv_obj_set_style_text_color(label_status, data->armed ? lv_color_hex(0xFF4444) : lv_color_hex(0x44FF44), 0);
 
         lv_label_set_text_fmt(label_vbat_rx, "RX: %.1fV", data->vbat_drone);
-        lv_label_set_text_fmt(label_rssi, "RSSI: %d%%", data->rssi);
+        lv_label_set_text_fmt(label_rssi, "RSSI: %d dBm", (int)data->rssi);
     }
 
     update_active_led(leds_top[0], data->armed, lv_color_hex(0xFF0000));

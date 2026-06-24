@@ -73,30 +73,88 @@ lv_obj_t* scr_telemetry_create(void) {
 }
 
 void scr_telemetry_update(UIData_t *data) {
+    char buf[64]; // Buffer tạm dùng snprintf chuẩn, tránh bug float/double của LVGL
+
     if (!data->is_connected) {
-        lv_label_set_text(label_fm, "MODE: OFFLINE");
+        lv_label_set_text(label_fm,   "MODE: OFFLINE");
         lv_label_set_text(label_batt, "BATTERY\n-- V\n-- A\n-- %");
-        lv_label_set_text(label_rf, "RF LINK\nRSSI: --\nLQ: --\nSNR: --");
-        lv_label_set_text(label_gps, "GPS\nSats: 0\nAlt: --\nLat: --");
-        lv_label_set_text(label_att, "ATTITUDE\nPt: --\nRl: --\nYw: --");
+        lv_label_set_text(label_rf,   "RF LINK\nRSSI: --\nLQ: --\nSNR: --");
+        lv_label_set_text(label_gps,  "GPS\nSats: 0\nAlt: --\nLat: --");
+        lv_label_set_text(label_att,  "ATTITUDE\nPt: --\nRl: --\nYw: --");
         return;
     }
 
+    // Flight Mode — đây cũng là "bảng lỗi" của PX4:
+    // PX4 encode toàn bộ lỗi/cảnh báo vào chuỗi này
+    // VD: "FAILSAFE", "PREFLT FAIL", "AUTO.LAND", "AUTO.RTL"
     if (data->flight_mode[0] != '\0') {
-        lv_label_set_text_fmt(label_fm, "MODE: %s", data->flight_mode);
+        snprintf(buf, sizeof(buf), "MODE: %s", data->flight_mode);
     } else {
-        lv_label_set_text(label_fm, "MODE: CONNECTED");
+        snprintf(buf, sizeof(buf), "MODE: CONNECTED");
+    }
+    lv_label_set_text(label_fm, buf);
+
+    // Đổi màu label theo mức độ nghiêm trọng của trạng thái PX4
+    const char *fm = data->flight_mode;
+    if (strstr(fm, "FAILSAFE") || strstr(fm, "PREFLT") || strstr(fm, "FAIL") || strstr(fm, "N/A")) {
+        // ĐỎ: lỗi nghiêm trọng, không thể bay / mất tín hiệu
+        lv_obj_set_style_text_color(label_fm, lv_color_hex(0xFF2222), 0);
+    } else if (strstr(fm, "RTL") || strstr(fm, "LAND") || strstr(fm, "LOITER") || strstr(fm, "HOLD")) {
+        // VÀNG: đang thực hiện maneuver tự động, cần chú ý
+        lv_obj_set_style_text_color(label_fm, lv_color_hex(0xFFAA00), 0);
+    } else {
+        // XANH LÁ: trạng thái bay bình thường
+        lv_obj_set_style_text_color(label_fm, lv_color_hex(0x44FF44), 0);
     }
 
-    lv_label_set_text_fmt(label_batt, "BATTERY\n%.1f V\n%.1f A\n%d %%", 
-        data->vbat_drone, data->current_drone, data->batt_remaining);
+    // Battery — dùng snprintf chuẩn để tránh lv_snprintf float/double mismatch
+    // Root cause: C ABI promotes float→double (8B) nhưng lv_snprintf đọc 4B → %d lệch stack
+    {
+        // Tách riêng từng giá trị ra int để tránh hoàn toàn float trong variadic
+        int v_int  = (int)data->vbat_drone;
+        int v_dec  = (int)((data->vbat_drone  - v_int) * 10.0f);
+        int c_int  = (int)data->current_drone;
+        int c_dec  = (int)((data->current_drone - c_int) * 10.0f);
+        int batt_pct = (int)(uint8_t)data->batt_remaining; // double-cast để chắc chắn 0-100
+        if (v_dec < 0) v_dec = -v_dec;
+        if (c_dec < 0) c_dec = -c_dec;
+        snprintf(buf, sizeof(buf), "BATTERY\n%d.%d V\n%d.%d A\n%d %%",
+                 v_int, v_dec, c_int, c_dec, batt_pct);
+    }
+    lv_label_set_text(label_batt, buf);
 
-    lv_label_set_text_fmt(label_rf, "RF LINK\nRSSI: %d dBm\nLQ: %d %%\nSNR: %d dB", 
-        data->rssi, data->link_quality, data->snr);
+    // RF Link — int8_t/uint8_t, an toàn với %d
+    snprintf(buf, sizeof(buf), "RF LINK\nRSSI: %d dBm\nLQ: %d %%\nSNR: %d dB",
+             (int)data->rssi, (int)data->link_quality, (int)data->snr);
+    lv_label_set_text(label_rf, buf);
 
-    lv_label_set_text_fmt(label_gps, "GPS\nSats: %d\nAlt: %.1fm\nLat: %.4f", 
-        data->gps_sats, data->gps_alt, data->gps_lat / 10000000.0f);
+    // GPS — float altitude và lat, tách int để tránh LVGL float bug
+    {
+        int alt_int = (int)data->gps_alt;
+        int alt_dec = (int)((data->gps_alt - alt_int) * 10.0f);
+        float lat_f = data->gps_lat / 10000000.0f;
+        int lat_int = (int)lat_f;
+        int lat_dec = (int)((lat_f - lat_int) * 10000.0f);
+        if (alt_dec < 0) alt_dec = -alt_dec;
+        if (lat_dec < 0) lat_dec = -lat_dec;
+        snprintf(buf, sizeof(buf), "GPS\nSats: %d\nAlt: %d.%dm\nLat: %d.%04d",
+                 (int)data->gps_sats, alt_int, alt_dec, lat_int, lat_dec);
+    }
+    lv_label_set_text(label_gps, buf);
 
-    lv_label_set_text_fmt(label_att, "ATTITUDE\nPt: %.1f\nRl: %.1f\nYw: %.1f", 
-        data->drone_pitch * 57.2958f, data->drone_roll * 57.2958f, data->drone_yaw * 57.2958f);
+    // Attitude — float rad → degree, tách int
+    {
+        float pt_deg = data->drone_pitch * 57.2958f;
+        float rl_deg = data->drone_roll  * 57.2958f;
+        float yw_deg = data->drone_yaw   * 57.2958f;
+        int pt_i = (int)pt_deg, pt_d = (int)((pt_deg - pt_i) * 10.0f);
+        int rl_i = (int)rl_deg, rl_d = (int)((rl_deg - rl_i) * 10.0f);
+        int yw_i = (int)yw_deg, yw_d = (int)((yw_deg - yw_i) * 10.0f);
+        if (pt_d < 0) pt_d = -pt_d;
+        if (rl_d < 0) rl_d = -rl_d;
+        if (yw_d < 0) yw_d = -yw_d;
+        snprintf(buf, sizeof(buf), "ATTITUDE\nPt: %d.%d\nRl: %d.%d\nYw: %d.%d",
+                 pt_i, pt_d, rl_i, rl_d, yw_i, yw_d);
+    }
+    lv_label_set_text(label_att, buf);
 }
