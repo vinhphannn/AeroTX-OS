@@ -101,58 +101,7 @@ static uint16_t read_mux_alpha_trimmed(uint8_t mux_ch, uint32_t settle_us)
     return (uint16_t)((v[1] + v[2] + v[3]) / 3);
 }
 
-// FIX NOISE: Adaptive IIR Low-Pass Filter with Deadband
-// Đây là thuật toán lọc nhiễu thông minh tốt nhất cho Joystick FPV:
-// - Nhiễu nhỏ (Jitter tĩnh): Bỏ qua hoàn toàn (Deadband)
-// - Di chuyển chậm: Lọc cực mạnh để mượt mà (chống stair-stepping)
-// - Di chuyển nhanh (Flick tay): Bỏ qua bộ lọc (Alpha = 100%), phản hồi 0ms
-static uint16_t s_joy_filtered[7] = {2048, 2048, 2048, 2048, 2048, 2048, 2048}; // [0-3]joy, [4-5]pot, [6]vbat
-static bool s_first_run[7] = {true, true, true, true, true, true, true};
 
-// index: 0-5 joy/pot, 6 vbat
-static uint16_t apply_iir(uint8_t idx, uint16_t new_val)
-{
-    if (s_first_run[idx]) {
-        s_joy_filtered[idx] = new_val;
-        s_first_run[idx] = false;
-        return new_val;
-    }
-
-    if (idx == 6) {
-        // Pin (VBAT) thay đổi cực chậm -> Lọc siêu chậm (Alpha = 3/256)
-        uint32_t alpha = 3;
-        uint32_t filtered = (alpha * new_val + (256 - alpha) * s_joy_filtered[idx] + 128) / 256;
-        s_joy_filtered[idx] = (uint16_t)filtered;
-        return s_joy_filtered[idx];
-    }
-    
-    uint16_t old_val = s_joy_filtered[idx];
-    int16_t diff = (int16_t)new_val - (int16_t)old_val;
-    uint16_t abs_diff = abs(diff);
-    
-    // 1. Deadband: ESP32 ADC1 có nền nhiễu thực tế khoảng 10-12 LSB sau bộ lọc.
-    // Khóa chặt nếu dao động <= 12 để triệt tiêu toàn bộ nhiễu tĩnh còn sót lại.
-    if (abs_diff <= 12) {
-        return old_val;
-    }
-    
-    // 2. Dynamic EMA (Exponential Moving Average)
-    uint32_t alpha;
-    if (abs_diff < 20) {
-        alpha = 16;  // Di chuyển siêu chậm -> Lọc siêu mượt (chống gợn sóng)
-    } else if (abs_diff < 60) {
-        alpha = 48;  // Di chuyển chậm -> Lọc vừa
-    } else if (abs_diff < 150) {
-        alpha = 128; // Di chuyển bình thường -> Lọc nhẹ
-    } else {
-        alpha = 256; // Flick tay -> Lấy giá trị tức thời (0ms delay)
-    }
-
-    // Cộng thêm 128 (một nửa của 256) để làm tròn số học (Rounding), tránh lỗi kẹt giá trị của phép chia số nguyên
-    uint32_t filtered = (alpha * new_val + (256 - alpha) * old_val + 128) / 256;
-    s_joy_filtered[idx] = (uint16_t)filtered;
-    return s_joy_filtered[idx];
-}
 
 void HAL_Input_Init(void)
 {
@@ -190,29 +139,27 @@ void HAL_Input_Read(RawInput_t *out)
      * - vbat(1ch): 50us settle + 2x ADC  ~ 1 × (50+100us)  = 150us
      * Tổng ~1.35ms (IIR filter bù nhiễu thay thế settle dài) */
 
-    // Tăng Settle time lên 30us để xả hết nhiễu điện dung từ kênh trước
-    // Dùng Alpha-Trimmed Filter (5 mẫu) để chặn Spikes (xung nhiễu lớn kéo dài)
-    out->joy[0] = apply_iir(0, read_mux_alpha_trimmed(MUX_CH_THROTTLE, 30));
-    out->joy[1] = apply_iir(1, read_mux_alpha_trimmed(MUX_CH_YAW,      30));
-    out->joy[2] = apply_iir(2, read_mux_alpha_trimmed(MUX_CH_PITCH,    30));
-    out->joy[3] = apply_iir(3, read_mux_alpha_trimmed(MUX_CH_ROLL,     30));
+    // Tăng Settle time lên 300us để xả hết điện dung từ MUX, giúp tín hiệu ổn định tuyệt đối
+    // (Bắt chước độ trễ 1-2ms khi bật BLE để triệt tiêu nhiễu chéo giữa các kênh)
+    out->joy[0] = read_mux_alpha_trimmed(MUX_CH_THROTTLE, 300);
+    out->joy[1] = read_mux_alpha_trimmed(MUX_CH_YAW,      300);
+    out->joy[2] = read_mux_alpha_trimmed(MUX_CH_PITCH,    300);
+    out->joy[3] = read_mux_alpha_trimmed(MUX_CH_ROLL,     300);
   
-    // 2. Biến trở: Settle 50us
-    out->pot[0] = apply_iir(4, read_mux_alpha_trimmed(MUX_CH_P1, 50));
-    out->pot[1] = apply_iir(5, read_mux_alpha_trimmed(MUX_CH_P2, 50));
+    // 2. Biến trở: Settle 300us
+    out->pot[0] = read_mux_alpha_trimmed(MUX_CH_P1, 300);
+    out->pot[1] = read_mux_alpha_trimmed(MUX_CH_P2, 300);
 
-    // 3. Công tắc: Chỉ cần 1 lần đọc (digital signal, không cần avg)
-    //    Settle 20us: switch có trở kháng thấp, tín hiệu sạch
-    out->sw_mode   = read_mux_raw(MUX_CH_SW_MODE,   20);
-    out->sw_flight = read_mux_raw(MUX_CH_SW_FLIGHT,  20);
-    out->sw_arm    = read_mux_raw(MUX_CH_SW_ARM,     20);
-    out->sw_beeper = read_mux_raw(MUX_CH_SW_BEEPER,  20);
-    out->sw_led    = read_mux_raw(MUX_CH_SW_LED,     20);
-    out->sw_aux    = read_mux_raw(MUX_CH_SW_AUX,     20);
+    // 3. Công tắc: Settle 50us vì trở kháng thấp, tín hiệu rất sạch
+    out->sw_mode   = read_mux_raw(MUX_CH_SW_MODE,    50);
+    out->sw_flight = read_mux_raw(MUX_CH_SW_FLIGHT,  50);
+    out->sw_arm    = read_mux_raw(MUX_CH_SW_ARM,     50);
+    out->sw_beeper = read_mux_raw(MUX_CH_SW_BEEPER,  50);
+    out->sw_led    = read_mux_raw(MUX_CH_SW_LED,     50);
+    out->sw_aux    = read_mux_raw(MUX_CH_SW_AUX,     50);
 
-    // 4. Pin TX: Settle 200us để điện áp MUX13 (vbat) xả hết trước chu kỳ kế tiếp
-    //    Tránh bleed sang joy[0] (MUX1) ở đầu chu kỳ sau → gây ch5↔ch14 correlation
-    out->vbat_raw  = apply_iir(6, read_mux_alpha_trimmed(MUX_CH_VBAT_TX, 200));
+    // 4. Pin TX: Settle 400us để điện áp xả hết, tránh bleed sang kênh Throttle (MUX1)
+    out->vbat_raw  = read_mux_alpha_trimmed(MUX_CH_VBAT_TX, 400);
 }
 
 // ═══════════════════════════════════════════════════════════════════
