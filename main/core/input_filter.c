@@ -70,6 +70,8 @@ static Median3_t  s_joy_med[4];    // median buffer cho 4 trục joy
 static Median3_t  s_pot_med[2];    // median buffer cho 2 biến trở
 static uint16_t   s_joy_stable[4]; // giá trị ổn định sau deadband
 static uint16_t   s_pot_stable[2];
+static float      s_joy_ema[4] = {0}; // Trạng thái bộ lọc EMA
+static float      s_pot_ema[2] = {0}; // Trạng thái bộ lọc EMA
 static bool       s_init_done = false;
 
 // Debounce switch 2 nấc
@@ -112,38 +114,49 @@ static inline uint16_t median3(uint16_t a, uint16_t b, uint16_t c)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: Lọc một kênh analog (Median-3 + Adaptive Deadband)
+// Helper: Lọc một kênh analog (Median-3 + EMA IIR + Adaptive Deadband)
 // ─────────────────────────────────────────────────────────────────────────────
-static uint16_t filter_analog(Median3_t *m, uint16_t *stable,
+static uint16_t filter_analog(Median3_t *m, uint16_t *stable, float *ema,
                                uint16_t new_raw,
                                uint16_t deadband_static,
                                uint16_t deadband_moving,
-                               uint16_t fast_thresh)
+                               uint16_t fast_thresh,
+                               float alpha)
 {
     // 1. Cập nhật vòng đệm Median-3
     m->buf[m->idx] = new_raw;
     m->idx = (m->idx + 1) % 3;
     if (!m->ready && m->idx == 0) m->ready = true;
 
-    // Nếu chưa đủ 3 mẫu, trả về mẫu hiện tại
+    // Nếu chưa đủ 3 mẫu, khởi tạo trạng thái
     if (!m->ready) {
         *stable = new_raw;
+        *ema = (float)new_raw;
         return new_raw;
     }
 
     uint16_t med = median3(m->buf[0], m->buf[1], m->buf[2]);
 
-    // 2. Adaptive Deadband
-    int16_t diff = (int16_t)med - (int16_t)*stable;
+    // 2. EMA Filter (IIR Low-Pass) để triệt tiêu nhiễu Gaussian liên tục
+    if (*ema == 0.0f) {
+        *ema = (float)med;
+    } else {
+        *ema = (*ema * (1.0f - alpha)) + ((float)med * alpha);
+    }
+    uint16_t smoothed = (uint16_t)(*ema + 0.5f);
+
+    // 3. Adaptive Deadband
+    int16_t diff = (int16_t)smoothed - (int16_t)*stable;
     uint16_t abs_diff = (diff < 0) ? (uint16_t)(-diff) : (uint16_t)diff;
 
     if (abs_diff >= fast_thresh) {
         // Di chuyển nhanh: pass-through ngay, không delay
-        *stable = med;
+        *stable = smoothed;
+        *ema = (float)smoothed; // Reset EMA để không bị trễ
     } else if (abs_diff > deadband_static) {
         // Di chuyển chậm/vừa: áp deadband moving nhỏ hơn
         if (abs_diff > deadband_moving) {
-            *stable = med;
+            *stable = smoothed;
         }
         // else: deadband tĩnh không thỏa → giữ nguyên
     }
@@ -230,23 +243,25 @@ void input_filter_update(const RawInput_t *raw)
 {
     if (!s_init_done) input_filter_init();
 
-    // ── 1. Joystick: Median-3 + Adaptive Deadband ────────────────────────────
+    // ── 1. Joystick: Median-3 + Adaptive Deadband + EMA ─────────────────────────
     for (int i = 0; i < 4; i++) {
         s_filtered.joy[i] = filter_analog(
-            &s_joy_med[i], &s_joy_stable[i],
+            &s_joy_med[i], &s_joy_stable[i], &s_joy_ema[i],
             raw->joy[i],
             JOY_DEADBAND_STATIC,
             JOY_DEADBAND_MOVING,
-            JOY_FAST_THRESH
+            JOY_FAST_THRESH,
+            0.4f // Alpha = 0.4 (mượt mà như BLE gamepad)
         );
     }
 
-    // ── 2. Biến trở: Median-3 + Deadband ±10 ────────────────────────────────
+    // ── 2. Biến trở: Median-3 + Deadband ±10 + EMA ──────────────────────────────
     for (int i = 0; i < 2; i++) {
         s_filtered.pot[i] = filter_analog(
-            &s_pot_med[i], &s_pot_stable[i],
+            &s_pot_med[i], &s_pot_stable[i], &s_pot_ema[i],
             raw->pot[i],
-            POT_DEADBAND, POT_DEADBAND / 2, JOY_FAST_THRESH
+            POT_DEADBAND, POT_DEADBAND / 2, JOY_FAST_THRESH,
+            0.2f // Alpha nhỏ hơn cho biến trở
         );
     }
 
