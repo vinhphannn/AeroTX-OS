@@ -1,6 +1,7 @@
 idf_component_register(SRCS "main.c"
                             "joy_nav.c"
                             "core/hal_input.c"
+                            "core/input_filter.c"
                             "core/crsf.c"
                             "core/storage_manager.c"
                             "core/utils.c"

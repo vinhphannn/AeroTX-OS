@@ -16,7 +16,8 @@
 #include "core/sys_state.h"
 #include "core/sys_config.h"
 #include "core/hal_input.h"
-#include "core/timing_test.h"   // <<< TEST: đo thời gian thực thi
+#include "core/input_filter.h"   // Tầng lọc thống nhất (Tầng 2)
+#include "core/timing_test.h"
 #include "esp_log.h"
 #include <math.h>
 #include <string.h>
@@ -30,23 +31,7 @@ static const char *TAG = "SENSOR_TASK";
 // Dễ test riêng lẻ, dễ thay thế thuật toán sau này.
 // -----------------------------------------------------------------------
 
-// Ngưỡng phân biệt công tắc 3 nấc từ ADC raw (0-4095)
-// Chia đều 3 vùng: 0-1365 = nấc 0, 1365-2730 = nấc 1, >2730 = nấc 2
-#define SW3WAY_LOW_THRESH   1300
-#define SW3WAY_HIGH_THRESH  2700
 
-static inline uint8_t decode_3way(uint16_t raw)
-{
-    if (raw < SW3WAY_LOW_THRESH)  return 0;
-    if (raw < SW3WAY_HIGH_THRESH) return 1;
-    return 2;
-}
-
-// Công tắc 2 nấc: < 2000 = ON, >= 2000 = OFF (tụ pull-down)
-static inline bool decode_2way(uint16_t raw)
-{
-    return (raw < 2000);
-}
 
 // Áp dụng Exponential Curve lên một trục (không áp dụng cho Throttle)
 static uint16_t apply_expo(uint16_t val_us, uint8_t expo_pct)
@@ -63,14 +48,16 @@ static uint16_t apply_expo(uint16_t val_us, uint8_t expo_pct)
 }
 
 /**
- * mixer_process_frame() - Biến đổi RawInput_t thành 12 RC channels (1000-2000µs)
+ * mixer_process_frame() - Biến đổi FilteredInput_t thành 12 RC channels (1000-2000µs)
  *
- * @param raw    Dữ liệu thô từ HAL
+ * @param filt   Dữ liệu đã lọc từ input_filter
+ * @param raw    Dữ liệu thô (chỉ dùng lưu lại cho Calib Wizard)
  * @param model  Model config hiện tại (Expo, Trim, Rates, Reverse)
  * @param cal    Calibration data (Min/Max/Center/Deadband cho từng trục)
  * @param state  Con trỏ đến g_state để ghi kết quả (channels + meta)
  */
-static void mixer_process_frame(const RawInput_t *raw,
+static void mixer_process_frame(const FilteredInput_t *filt,
+                                const RawInput_t *raw,
                                 const ModelConfig_t *model,
                                 const CalibData_t *cal,
                                 SystemState_t *state)
@@ -81,7 +68,7 @@ static void mixer_process_frame(const RawInput_t *raw,
     // ----------------------------------------
     for (int i = 0; i < 4; i++) {
         uint16_t val;
-        uint16_t adc = raw->joy[i];
+        uint16_t adc = filt->joy[i];
 
         if (cal->valid) {
             if (i == 0) {
@@ -153,104 +140,37 @@ static void mixer_process_frame(const RawInput_t *raw,
     // ═══════════════════════════════════════════════════════════════
 
     // ── 4 Công tắc 2 nấc ────────────────────────────────────────
-    bool armed = decode_2way(raw->sw_arm);
+    bool armed = filt->sw_arm;
     state->is_armed    = armed;
-    state->channels[4] = armed ? 2000 : 1000;                        // Ch5: ARM
-    state->channels[5] = decode_2way(raw->sw_beeper) ? 2000 : 1000;  // Ch6: Beeper
-    state->channels[6] = decode_2way(raw->sw_led)    ? 2000 : 1000;  // Ch7: LED
-    state->channels[7] = decode_2way(raw->sw_aux)    ? 2000 : 1000;  // Ch8: AUX
+    state->channels[4] = armed ? 2000 : 1000;                  // Ch5: ARM
+    state->channels[5] = filt->sw_beeper ? 2000 : 1000;        // Ch6: Beeper
+    state->channels[6] = filt->sw_led    ? 2000 : 1000;        // Ch7: LED
+    state->channels[7] = filt->sw_aux    ? 2000 : 1000;        // Ch8: AUX
 
     // ── 2 Công tắc 3 nấc ─────────────────────────────────────────
-    uint8_t flight_mode = decode_3way(raw->sw_flight);
-    state->channels[8] = 1000 + (uint16_t)(flight_mode * 500);        // Ch9: Flight Mode
+    uint8_t flight_mode = filt->sw_flight;
+    state->channels[8] = 1000 + (uint16_t)(flight_mode * 500); // Ch9: Flight Mode
 
-    uint8_t sys_mode = decode_3way(raw->sw_mode);
+    uint8_t sys_mode = filt->sw_mode;
     state->sys_mode    = sys_mode;
-    state->channels[9] = 1000 + (uint16_t)(sys_mode * 500);           // Ch10: Sys Mode
+    state->channels[9] = 1000 + (uint16_t)(sys_mode * 500);    // Ch10: Sys Mode
 
     // ── 2 Biến trở xoay ──────────────────────────────────────────
-    state->channels[10] = 1000 + (uint32_t)raw->pot[0] * 1000 / 4095; // Ch11: P1
-    state->channels[11] = 1000 + (uint32_t)raw->pot[1] * 1000 / 4095; // Ch12: P2
+    state->channels[10] = 1000 + (uint32_t)filt->pot[0] * 1000 / 4095; // Ch11: P1
+    state->channels[11] = 1000 + (uint32_t)filt->pot[1] * 1000 / 4095; // Ch12: P2
 
 
 
-    // ----------------------------------------
-    // BƯỚC 4: Meta-data hệ thống
-    // ----------------------------------------
-    // Điện áp TX: ADC raw → Volt thực.
-    // Tỉ lệ 3.48f phụ thuộc vào cầu phân áp thực tế (VD: 2.2k + 1k).
-    // NẾU HIỂN THỊ SAI: Hãy đo vbat bằng đồng hồ và chỉnh lại số 3.48f này.
-    // Tỉ lệ 3.57f đã được hiệu chỉnh theo multimeter của người dùng (6.98V)
-    state->tx_vbat = (float)raw->vbat_raw * (3.3f / 4095.0f) * 3.57f;
-    if (state->tx_vbat < 0.5f) state->tx_vbat = 0.0f;
-    if (state->tx_vbat > 15.0f) state->tx_vbat = 15.0f;
-
-    // Tính % pin (Giả định dùng pin 2S LiPo: 7.0V là 0%, 8.4V là 100%)
-    float pct = (state->tx_vbat - 7.0f) / (8.4f - 7.0f) * 100.0f;
-    if (pct < 0)   pct = 0;
-    if (pct > 100) pct = 100;
-    state->tx_vbat_pct = (uint8_t)pct;
+    // Điện áp TX + %pin: lấy trực tiếp từ input_filter (đã tính sẵn, đã lọc nặng)
+    // Không cần tính lại trong mixer, tránh nhảy số khi dùng integer division.
+    state->tx_vbat     = filt->vbat_v;
+    state->tx_vbat_pct = filt->vbat_pct;
 
     // Lưu raw ADC để màn hình Calibration Wizard dùng
     for (int i = 0; i < 4; i++) state->raw_joy[i] = raw->joy[i];
 }
 
-// -----------------------------------------------------------------------
-// CHANNEL STABILIZER - Tầng lọc chung sau Mixer
-// Chỉ áp dụng cho 4 trục joy (idx 0-3). Công tắc (idx 4+) là số nguyên nên không cần.
-// Bổ sung: Median Filter (5 mẫu) để triệt tiêu hoàn toàn "RF Burst Noise" (nhiễu
-// do module TX phát sóng công suất cao làm sụt áp 3.3V từng chớp).
-// Sau khi Median sẽ qua Deadband ±2 PWM.
-// Kết quả: channels[0..3] trong g_state LUỜN sạch - BLE/CRSF/Display dùng chung.
-// -----------------------------------------------------------------------
-#define CH_STAB_DEADBAND  2
-static uint16_t s_ch_stable[4] = {1000, 1500, 1500, 1500};
-static uint16_t s_median_buf[4][5];
-static uint8_t s_median_idx[4] = {0};
-static bool s_stab_first_run = true;
 
-static uint16_t get_median_5(uint16_t arr[5]) {
-    uint16_t temp[5];
-    memcpy(temp, arr, sizeof(temp));
-    // Bubble sort 5 phần tử
-    for (int i = 0; i < 4; i++) {
-        for (int j = i + 1; j < 5; j++) {
-            if (temp[i] > temp[j]) {
-                uint16_t t = temp[i]; temp[i] = temp[j]; temp[j] = t;
-            }
-        }
-    }
-    return temp[2]; // Trả về phần tử ở giữa
-}
-
-static void channel_stabilize(SystemState_t *state)
-{
-    if (s_stab_first_run) {
-        for (int i = 0; i < 4; i++) {
-            s_ch_stable[i] = state->channels[i];
-            for (int j = 0; j < 5; j++) s_median_buf[i][j] = state->channels[i];
-        }
-        s_stab_first_run = false;
-        return;
-    }
-
-    for (int i = 0; i < 4; i++) {
-        // 1. Thêm mẫu mới vào buffer
-        s_median_buf[i][s_median_idx[i]] = state->channels[i];
-        s_median_idx[i] = (s_median_idx[i] + 1) % 5;
-
-        // 2. Lấy giá trị Median để loại bỏ RF burst (giá trị nhảy vọt đột ngột)
-        uint16_t med_val = get_median_5(s_median_buf[i]);
-
-        // 3. Áp dụng Deadband ±2 PWM lên giá trị Median
-        int diff = (int)med_val - (int)s_ch_stable[i];
-        if (diff < 0) diff = -diff;
-        if (diff > CH_STAB_DEADBAND) {
-            s_ch_stable[i] = med_val;
-        }
-        state->channels[i] = s_ch_stable[i];
-    }
-}
 
 // -----------------------------------------------------------------------
 // TASK ENTRY POINT
@@ -281,6 +201,10 @@ void sensor_task(void *pvParameters)
         TIMING_END(id_hal);
         uint64_t hal_elapsed = esp_timer_get_time() - hal_start;
 
+        // BƯỚC 1.5: Lọc tín hiệu tập trung (Tầng 2)
+        input_filter_update(&raw);
+        const FilteredInput_t *filt = input_filter_get();
+
         // BƯỚC 2 + 3: Mixer + Ghi vào g_state
         // Tối ưu: Chỉ giữ mutex khi sao chép kết quả, không giữ khi tính toán toán học
         TIMING_START(id_mixer);
@@ -292,11 +216,7 @@ void sensor_task(void *pvParameters)
             xSemaphoreGive(sys_mutex);
 
             // 2. Tính toán mixer trên bản snapshot (không chiếm mutex)
-            mixer_process_frame(&raw, &snap.active_model, &snap.calib, &snap);
-
-            // 2.5 Channel Stabilizer: Deadband ±2 µs cho ch[0..3] - một lần duy nhất,
-            // tất cả consumer (CRSF, BLE, Display) đớu đọc giá trị đã ổn định này.
-            channel_stabilize(&snap);
+            mixer_process_frame(filt, &raw, &snap.active_model, &snap.calib, &snap);
 
             // 3. Cập nhật kết quả vào g_state (chiếm mutex cực ngắn)
             if (xSemaphoreTake(sys_mutex, pdMS_TO_TICKS(1)) == pdTRUE) {
