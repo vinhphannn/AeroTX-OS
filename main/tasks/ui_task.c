@@ -50,8 +50,6 @@ void ui_task(void *pvParameters)
     uint32_t ui_miss_count    = 0;
     uint32_t ui_frame_count   = 0;
 
-    TickType_t last_wake = xTaskGetTickCount();
-
     while (1) {
         ui_frame_count++;
 
@@ -259,9 +257,10 @@ void ui_task(void *pvParameters)
         }
 
         // ---------------------------------------------------------------
-        // B7: Chạy đúng 60Hz (16ms/frame)
-        // vTaskDelayUntil tự bù thời gian xử lý LVGL render
+        // B7: Chạy ~60Hz
+        // Dùng vTaskDelay cố định 16ms để tránh lỗi vTaskDelayUntil tính sai
+        // thời gian sleep quá dài gây lỗi Tickless Idle và Watchdog CPU 1.
         // ---------------------------------------------------------------
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(16));
+        vTaskDelay(pdMS_TO_TICKS(16));
     }
 }
