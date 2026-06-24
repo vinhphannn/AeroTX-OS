@@ -251,7 +251,7 @@ void input_filter_update(const RawInput_t *raw)
             JOY_DEADBAND_STATIC,
             JOY_DEADBAND_MOVING,
             JOY_FAST_THRESH,
-            0.4f // Alpha = 0.4 (mượt mà như BLE gamepad)
+            0.15f // Alpha = 0.15 (Siêu mượt để trị nguồn nhiễu nặng, trễ ~30ms)
         );
     }
 
